@@ -9,9 +9,24 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "cloudinary": "^1.41.3",
+    "cookie-session": "^2.1.1",
+    "cors": "^2.8.5",
+    "crypto-js": "^4.2.0",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "express-session": "^1.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.19.2",
+    "multer": "^2.0.2",
+    "multer-storage-cloudinary": "^4.0.0",
+    "next": "16.0.1",
+    "nodemailer": "^7.0.10",
     "react": "19.2.0",
     "react-dom": "19.2.0",
-    "next": "16.0.1"
+    "react-images-uploading": "^3.1.7",
+    "stripe": "^19.2.0",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "babel-plugin-react-compiler": "1.0.0",
