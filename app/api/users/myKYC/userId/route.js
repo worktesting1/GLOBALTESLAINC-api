@@ -2,39 +2,26 @@ import { NextResponse } from "next/server";
 import dbConnect from "../../../../../../lib/mongodb";
 import Kyc from "../../../../../../models/Kyc";
 import { withAuth } from "../../../../../../lib/apiHander";
+import { corsHeaders, handleOptions } from "../../../../../lib/cors";
 
-function getCorsHeaders() {
-  return {
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers":
-      "Content-Type, Authorization, token, x-requested-with",
-    "Access-Control-Allow-Origin": "http://localhost:3001",
-    "Access-Control-Allow-Credentials": "true",
-    "Content-Type": "application/json",
-  };
-}
-
-export async function OPTIONS() {
-  const headers = getCorsHeaders();
-  return new NextResponse(null, {
-    status: 200,
-    headers: {
-      ...headers,
-      "Access-Control-Max-Age": "86400",
-    },
-  });
+export async function OPTIONS(request) {
+  return handleOptions(request);
 }
 
 export async function GET(request, { params }) {
   try {
     const { userId } = await params;
     await dbConnect();
-    return await withAuth(handleGetMyKyc)(request, getCorsHeaders(), userId);
+    return await withAuth(handleGetMyKyc)(
+      request,
+      corsHeaders(request),
+      userId
+    );
   } catch (error) {
     console.error("MyKYC GET API Error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500, headers: getCorsHeaders() }
+      { status: 500, headers: corsHeaders(request) }
     );
   }
 }

@@ -3,49 +3,17 @@ import dbConnect from "../../../../lib/mongodb";
 import Withdrawal from "../../../../models/Withdrawal";
 import { withAdmin } from "../../../../lib/apiHander";
 
-// CORS headers helper
-function getCorsHeaders(request) {
-  const origin = request.headers.get("origin") || "";
-  const allowedOrigins = [
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:3001",
-  ];
+import { corsHeaders, handleOptions } from "../../../../lib/cors";
 
-  const headers = {
-    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers":
-      "Content-Type, Authorization, token, x-requested-with",
-  };
-
-  if (allowedOrigins.includes(origin)) {
-    headers["Access-Control-Allow-Origin"] = origin;
-    headers["Access-Control-Allow-Credentials"] = "true";
-  } else {
-    headers["Access-Control-Allow-Origin"] = "*";
-  }
-
-  return headers;
-}
-
-// Handle OPTIONS requests for CORS preflight
 export async function OPTIONS(request) {
-  const headers = getCorsHeaders(request);
-  return new NextResponse(null, {
-    status: 200,
-    headers: {
-      ...headers,
-      "Access-Control-Max-Age": "86400",
-    },
-  });
+  return handleOptions(request);
 }
 
 // GET handler - Get all withdrawals
 export async function GET(request, { params }) {
   try {
     const { route } = await params;
-    const headers = getCorsHeaders(request);
+    const headers = corsHeaders(request);
     await dbConnect();
 
     // Handle /api/withdrawal (get all withdrawals)
@@ -59,7 +27,7 @@ export async function GET(request, { params }) {
     );
   } catch (error) {
     console.error("Withdrawal GET API Error:", error);
-    const headers = getCorsHeaders(request);
+    const headers = corsHeaders(request);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500, headers }

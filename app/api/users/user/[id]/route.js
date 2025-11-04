@@ -3,27 +3,10 @@ import dbConnect from "../../../../../../lib/mongodb";
 import User from "../../../../../../models/Users";
 import { withAuth } from "../../../../../../lib/apiHander";
 import CryptoJS from "crypto-js";
+import { corsHeaders, handleOptions } from "../../../../../lib/cors";
 
-function getCorsHeaders() {
-  return {
-    "Access-Control-Allow-Methods": "PUT, OPTIONS",
-    "Access-Control-Allow-Headers":
-      "Content-Type, Authorization, token, x-requested-with",
-    "Access-Control-Allow-Origin": "http://localhost:3001",
-    "Access-Control-Allow-Credentials": "true",
-    "Content-Type": "application/json",
-  };
-}
-
-export async function OPTIONS() {
-  const headers = getCorsHeaders();
-  return new NextResponse(null, {
-    status: 200,
-    headers: {
-      ...headers,
-      "Access-Control-Max-Age": "86400",
-    },
-  });
+export async function OPTIONS(request) {
+  return handleOptions(request);
 }
 
 export async function PUT(request, { params }) {
@@ -33,7 +16,7 @@ export async function PUT(request, { params }) {
     await dbConnect();
     return await withAuth(handleUpdateUser)(
       request,
-      getCorsHeaders(),
+      corsHeaders(request),
       id,
       body
     );
@@ -41,7 +24,7 @@ export async function PUT(request, { params }) {
     console.error("User Update PUT API Error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500, headers: getCorsHeaders() }
+      { status: 500, headers: corsHeaders(request) }
     );
   }
 }

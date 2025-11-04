@@ -2,27 +2,10 @@ import { NextResponse } from "next/server";
 import dbConnect from "../../../../lib/mongodb";
 import User from "../../../../models/Users";
 import { withAuth, withAdmin } from "../../../../lib/apiHander";
+import { corsHeaders, handleOptions } from "../../../../lib/cors";
 
-function getCorsHeaders() {
-  return {
-    "Access-Control-Allow-Methods": "GET, PUT, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers":
-      "Content-Type, Authorization, token, x-requested-with",
-    "Access-Control-Allow-Origin": "http://localhost:3001",
-    "Access-Control-Allow-Credentials": "true",
-    "Content-Type": "application/json",
-  };
-}
-
-export async function OPTIONS() {
-  const headers = getCorsHeaders();
-  return new NextResponse(null, {
-    status: 200,
-    headers: {
-      ...headers,
-      "Access-Control-Max-Age": "86400",
-    },
-  });
+export async function OPTIONS(request) {
+  return handleOptions(request);
 }
 
 // GET user by ID (user's own data)
@@ -30,12 +13,12 @@ export async function GET(request, { params }) {
   try {
     const { id } = await params;
     await dbConnect();
-    return await withAuth(handleGetUser)(request, getCorsHeaders(), id);
+    return await withAuth(handleGetUser)(request, corsHeaders(request), id);
   } catch (error) {
     console.error("User GET API Error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500, headers: getCorsHeaders() }
+      { status: 500, headers: corsHeaders(request) }
     );
   }
 }
@@ -46,12 +29,12 @@ export async function PUT(request, { params }) {
     const { id } = await params;
     const body = await request.json();
     await dbConnect();
-    return await handleChangeUserData(request, getCorsHeaders(), id, body);
+    return await handleChangeUserData(request, corsHeaders(request), id, body);
   } catch (error) {
     console.error("User PUT API Error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500, headers: getCorsHeaders() }
+      { status: 500, headers: corsHeaders(request) }
     );
   }
 }
@@ -61,12 +44,12 @@ export async function DELETE(request, { params }) {
   try {
     const { id } = await params;
     await dbConnect();
-    return await withAdmin(handleDeleteUser)(request, getCorsHeaders(), id);
+    return await withAdmin(handleDeleteUser)(request, corsHeaders(request), id);
   } catch (error) {
     console.error("User DELETE API Error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500, headers: getCorsHeaders() }
+      { status: 500, headers: corsHeaders(request) }
     );
   }
 }

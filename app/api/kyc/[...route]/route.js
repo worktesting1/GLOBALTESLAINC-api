@@ -2,50 +2,17 @@ import { NextResponse } from "next/server";
 import dbConnect from "../../../../lib/mongodb";
 import Kyc from "../../../../models/Kyc";
 import { withAuth, withAdmin } from "../../../../lib/apiHander";
+import { corsHeaders, handleOptions } from "../../../../lib/cors";
 
-// CORS headers helper
-function getCorsHeaders(request) {
-  const origin = request.headers.get("origin") || "";
-  const allowedOrigins = [
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:3001",
-  ];
-
-  const headers = {
-    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers":
-      "Content-Type, Authorization, token, x-requested-with",
-  };
-
-  if (allowedOrigins.includes(origin)) {
-    headers["Access-Control-Allow-Origin"] = origin;
-    headers["Access-Control-Allow-Credentials"] = "true";
-  } else {
-    headers["Access-Control-Allow-Origin"] = "*";
-  }
-
-  return headers;
-}
-
-// Handle OPTIONS requests for CORS preflight
 export async function OPTIONS(request) {
-  const headers = getCorsHeaders(request);
-  return new NextResponse(null, {
-    status: 200,
-    headers: {
-      ...headers,
-      "Access-Control-Max-Age": "86400",
-    },
-  });
+  return handleOptions(request);
 }
 
 // POST handler - Submit KYC
 export async function POST(request, { params }) {
   try {
     const { route } = await params;
-    const headers = getCorsHeaders(request);
+    const headers = corsHeaders(request);
     await dbConnect();
 
     // Handle /api/kyc (submit KYC)
@@ -60,7 +27,7 @@ export async function POST(request, { params }) {
     );
   } catch (error) {
     console.error("KYC POST API Error:", error);
-    const headers = getCorsHeaders(request);
+    const headers = corsHeaders(request);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500, headers }
@@ -72,7 +39,7 @@ export async function POST(request, { params }) {
 export async function PUT(request, { params }) {
   try {
     const { route } = await params;
-    const headers = getCorsHeaders(request);
+    const headers = corsHeaders(request);
     await dbConnect();
 
     if (!route || route.length === 0) {
@@ -88,7 +55,7 @@ export async function PUT(request, { params }) {
     return await withAdmin(handleUpdateKyc)(request, headers, id, body);
   } catch (error) {
     console.error("KYC PUT API Error:", error);
-    const headers = getCorsHeaders(request);
+    const headers = corsHeaders(request);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500, headers }
@@ -100,7 +67,7 @@ export async function PUT(request, { params }) {
 export async function DELETE(request, { params }) {
   try {
     const { route } = await params;
-    const headers = getCorsHeaders(request);
+    const headers = corsHeaders(request);
     await dbConnect();
 
     if (!route || route.length === 0) {
@@ -114,7 +81,7 @@ export async function DELETE(request, { params }) {
     return await withAdmin(handleDeleteKyc)(request, headers, id);
   } catch (error) {
     console.error("KYC DELETE API Error:", error);
-    const headers = getCorsHeaders(request);
+    const headers = corsHeaders(request);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500, headers }
@@ -126,7 +93,7 @@ export async function DELETE(request, { params }) {
 export async function GET(request, { params }) {
   try {
     const { route } = await params;
-    const headers = getCorsHeaders(request);
+    const headers = corsHeaders(request);
     await dbConnect();
 
     // Handle /api/kyc (get all KYC - admin only)
@@ -152,7 +119,7 @@ export async function GET(request, { params }) {
     );
   } catch (error) {
     console.error("KYC GET API Error:", error);
-    const headers = getCorsHeaders(request);
+    const headers = corsHeaders(request);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500, headers }

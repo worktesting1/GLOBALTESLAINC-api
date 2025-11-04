@@ -7,44 +7,10 @@ import CryptoJS from "crypto-js";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
 import { v4 as uuidv4 } from "uuid";
+import { corsHeaders, handleOptions } from "../../../../lib/cors";
 
-// CORS headers helper
-function getCorsHeaders(request) {
-  const origin = request.headers.get("origin") || "";
-  const allowedOrigins = [
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:3001",
-  ];
-
-  const headers = {
-    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers":
-      "Content-Type, Authorization, token, x-requested-with",
-  };
-
-  // Check if the origin is allowed
-  if (allowedOrigins.includes(origin)) {
-    headers["Access-Control-Allow-Origin"] = origin;
-    headers["Access-Control-Allow-Credentials"] = "true";
-  } else {
-    headers["Access-Control-Allow-Origin"] = "*";
-  }
-
-  return headers;
-}
-
-// Handle OPTIONS requests for CORS preflight
 export async function OPTIONS(request) {
-  const headers = getCorsHeaders(request);
-  return new NextResponse(null, {
-    status: 200,
-    headers: {
-      ...headers,
-      "Access-Control-Max-Age": "86400", // 24 hours
-    },
-  });
+  return handleOptions(request);
 }
 
 // Main POST handler for all auth routes
@@ -56,7 +22,7 @@ export async function POST(request, { params }) {
 
     await dbConnect();
     const body = await request.json();
-    const headers = getCorsHeaders(request);
+    const headers = corsHeaders(request);
 
     // Route to appropriate handler based on action
     switch (action) {
@@ -80,7 +46,7 @@ export async function POST(request, { params }) {
     }
   } catch (error) {
     console.error("Auth API Error:", error);
-    const headers = getCorsHeaders(request);
+    const headers = corsHeaders(request);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500, headers }

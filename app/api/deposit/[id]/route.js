@@ -5,27 +5,10 @@ import Wallet from "../../../../models/Wallet";
 import { withAuth, withAdmin } from "../../../../lib/apiHander";
 import nodemailer from "nodemailer";
 
-// CORS headers helper
-function getCorsHeaders() {
-  return {
-    "Access-Control-Allow-Methods": "GET, PUT, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers":
-      "Content-Type, Authorization, token, x-requested-with",
-    "Access-Control-Allow-Origin": "http://localhost:3001",
-    "Access-Control-Allow-Credentials": "true",
-    "Content-Type": "application/json",
-  };
-}
+import { corsHeaders, handleOptions } from "../../../../lib/cors";
 
-export async function OPTIONS() {
-  const headers = getCorsHeaders();
-  return new NextResponse(null, {
-    status: 200,
-    headers: {
-      ...headers,
-      "Access-Control-Max-Age": "86400",
-    },
-  });
+export async function OPTIONS(request) {
+  return handleOptions(request);
 }
 
 // GET specific deposit
@@ -33,12 +16,16 @@ export async function GET(request, { params }) {
   try {
     const { id } = await params;
     await dbConnect();
-    return await withAuth(handleGetUserDeposits)(request, getCorsHeaders(), id);
+    return await withAuth(handleGetUserDeposits)(
+      request,
+      corsHeaders(request),
+      id
+    );
   } catch (error) {
     console.error("Deposit GET API Error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500, headers: getCorsHeaders() }
+      { status: 500, headers: corsHeaders(request) }
     );
   }
 }
@@ -51,7 +38,7 @@ export async function PUT(request, { params }) {
     const body = await request.json();
     return await withAdmin(handleUpdateDeposit)(
       request,
-      getCorsHeaders(),
+      corsHeaders(request),
       id,
       body
     );
@@ -59,7 +46,7 @@ export async function PUT(request, { params }) {
     console.error("Deposit PUT API Error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500, headers: getCorsHeaders() }
+      { status: 500, headers: corsHeaders(request) }
     );
   }
 }
@@ -69,12 +56,16 @@ export async function DELETE(request, { params }) {
   try {
     const { id } = await params;
     await dbConnect();
-    return await withAdmin(handleDeleteDeposit)(request, getCorsHeaders(), id);
+    return await withAdmin(handleDeleteDeposit)(
+      request,
+      corsHeaders(request),
+      id
+    );
   } catch (error) {
     console.error("Deposit DELETE API Error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500, headers: getCorsHeaders() }
+      { status: 500, headers: corsHeaders(request) }
     );
   }
 }
