@@ -142,63 +142,7 @@ async function sendLoanCreationEmails(loan) {
 }
 
 // Professional email template for users
-function loanCreationEmailTemplate(loan) {
-  return `
-  <!DOCTYPE html>
-  <html>
-  <head>
-      <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: #50626a; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; background: #f9f9f9; }
-          .loan-info { background: white; padding: 15px; margin: 15px 0; border-left: 4px solid #50626a; }
-          .status { background: #fff3cd; color: #856404; padding: 5px 10px; border-radius: 3px; display: inline-block; }
-      </style>
-  </head>
-  <body>
-      <div class="container">
-          <div class="header">
-              <h2>Wealth Grower Finance Bank</h2>
-              <p>Loan Application Confirmation</p>
-          </div>
-          <div class="content">
-              <p>Dear ${loan.firstName} ${loan.lastName},</p>
-              
-              <p>Thank you for submitting your loan application with Wealth Grower Finance Bank. Your application has been received and is now under review.</p>
-              
-              <div class="loan-info">
-                  <h3>Application Details:</h3>
-                  <p><strong>Reference Number:</strong> ${
-                    loan.referenceNumber
-                  }</p>
-                  <p><strong>Loan Type:</strong> ${
-                    loan.loanType || "Personal Loan"
-                  }</p>
-                  <p><strong>Amount Requested:</strong> $${
-                    loan.amount || "0"
-                  }</p>
-                  <p><strong>Loan Term:</strong> ${loan.term || "12"} months</p>
-                  <p><strong>Application Date:</strong> ${new Date().toLocaleString()}</p>
-                  <p><strong>Status:</strong> <span class="status">Under Review</span></p>
-              </div>
-              
-              <p><strong>Next Steps:</strong></p>
-              <ul>
-                  <li>Application review by our team</li>
-                  <li>Decision within 2-3 business days</li>
-                  <li>Fund disbursement upon approval</li>
-              </ul>
-              
-              <p>If you have any questions, please contact our support team at support@wealthgrowerfinance.org</p>
-              
-              <p>Best regards,<br>Wealth Grower Finance Bank Team</p>
-          </div>
-      </div>
-  </body>
-  </html>
-  `;
-}
+function loanCreationEmailTemplate(loan) {}
 
 // Admin notification template
 function adminNotificationTemplate(loan) {
