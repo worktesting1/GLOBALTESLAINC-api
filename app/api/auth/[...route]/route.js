@@ -13,18 +13,20 @@ export async function OPTIONS(request) {
   return handleOptions(request);
 }
 
-// Main POST handler for all auth routes
 export async function POST(request, { params }) {
+  let headers;
+
   try {
-    // Await the params Promise
+    // Set CORS headers immediately
+    headers = corsHeaders(request);
+
     const { route } = await params;
     const [action] = route || [];
 
     await dbConnect();
     const body = await request.json();
-    const headers = corsHeaders(request);
 
-    // Route to appropriate handler based on action
+    // Route to appropriate handler
     switch (action) {
       case "register":
         return await handleRegister(body, headers);
@@ -46,7 +48,12 @@ export async function POST(request, { params }) {
     }
   } catch (error) {
     console.error("Auth API Error:", error);
-    const headers = corsHeaders(request);
+
+    // Ensure we have headers even in error cases
+    if (!headers) {
+      headers = corsHeaders(request);
+    }
+
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500, headers }
