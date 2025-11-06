@@ -78,6 +78,13 @@ export async function PUT(request, { params }) {
             body.withdrawalId,
             body
           );
+        } else if (id === "reject" && body.withdrawalId) {
+          return await withAdmin(handleRejectWithdrawal)(
+            request,
+            headers,
+            body.withdrawalId,
+            body
+          );
         }
         break;
       default:
@@ -172,15 +179,11 @@ function generateReferenceNumber() {
 
 async function handleFundWallet(req, headers, body) {
   try {
-    // Note: File upload needs separate handling in Next.js
-    // For now, we'll assume the image URL is provided in the body
     const referenceNumber = generateReferenceNumber();
 
-    // Create funding request instead of directly updating balance
     const fundingRequest = new FundingRequest({
       ...body,
       referenceNumber,
-      // image: body.imageUrl, // You'll need to handle file upload separately
     });
 
     await fundingRequest.save();
@@ -334,12 +337,10 @@ async function handleGetWalletBalance(req, headers, id) {
 
 async function handleFundingHistory(req, headers, userId) {
   try {
-    // Get all funding requests
     const requests = await FundingRequest.find({ userId })
       .sort({ createdAt: -1 })
       .lean();
 
-    // Aggregation to get totals by status
     const totals = await FundingRequest.aggregate([
       { $match: { userId } },
       {
@@ -350,7 +351,6 @@ async function handleFundingHistory(req, headers, userId) {
       },
     ]);
 
-    // Prepare total values
     let totalAmount = 0;
     let pendingTotal = 0;
     let successfulTotal = 0;
@@ -361,7 +361,6 @@ async function handleFundingHistory(req, headers, userId) {
       else if (item._id === "successful") successfulTotal = item.total;
     }
 
-    // Optional debug if no records
     if (requests.length === 0) {
       const userExists = await User.exists({ _id: userId });
       const anyRequestsExist = await FundingRequest.exists({});
@@ -391,12 +390,10 @@ async function handleFundingHistory(req, headers, userId) {
 
 async function handleGetWithdrawals(req, headers, userId) {
   try {
-    // Get all withdrawals for the user
     const withdrawals = await Withdrawal.find({ userId }).sort({
       createdAt: -1,
     });
 
-    // Use aggregation to get totals by status
     const totals = await Withdrawal.aggregate([
       { $match: { userId } },
       {
@@ -407,15 +404,16 @@ async function handleGetWithdrawals(req, headers, userId) {
       },
     ]);
 
-    // Prepare totals
     let totalAmount = 0;
     let pendingTotal = 0;
     let successfulTotal = 0;
+    let failedTotal = 0;
 
     for (const item of totals) {
       totalAmount += item.total;
       if (item._id === "pending") pendingTotal = item.total;
-      else if (item._id === "successful") successfulTotal = item.total;
+      else if (item._id === "approved") successfulTotal = item.total;
+      else if (item._id === "failed") failedTotal = item.total;
     }
 
     return NextResponse.json(
@@ -424,6 +422,7 @@ async function handleGetWithdrawals(req, headers, userId) {
         totalAmount,
         pendingTotal,
         successfulTotal,
+        failedTotal,
       },
       { status: 200, headers }
     );
@@ -440,13 +439,45 @@ async function handleApproveWithdrawal(req, headers, withdrawalId, body) {
   try {
     const { status, txHash } = body;
 
-    // Validate status
-    if (!["processing", "approved", "failed"].includes(status)) {
+    const withdrawal = await Withdrawal.findById(withdrawalId);
+    if (!withdrawal) {
       return NextResponse.json(
-        { message: "Invalid status value" },
+        { message: "Withdrawal not found" },
+        { status: 404, headers }
+      );
+    }
+
+    if (withdrawal.status === "approved" || withdrawal.status === "failed") {
+      return NextResponse.json(
+        { message: "Withdrawal already finalized" },
         { status: 400, headers }
       );
     }
+
+    // Update status and txHash
+    withdrawal.status = "approved";
+    if (txHash) withdrawal.txHash = txHash;
+    await withdrawal.save();
+
+    // Send approval email
+    sendWithdrawalStatusEmail(withdrawal, "approved");
+
+    return NextResponse.json(
+      { message: "Withdrawal approved successfully", withdrawal },
+      { status: 200, headers }
+    );
+  } catch (error) {
+    console.error("Approve withdrawal error:", error);
+    return NextResponse.json(
+      { message: "Internal server error" },
+      { status: 500, headers }
+    );
+  }
+}
+
+async function handleRejectWithdrawal(req, headers, withdrawalId, body) {
+  try {
+    const { reason } = body;
 
     const withdrawal = await Withdrawal.findById(withdrawalId);
     if (!withdrawal) {
@@ -463,29 +494,27 @@ async function handleApproveWithdrawal(req, headers, withdrawalId, body) {
       );
     }
 
-    // If failed, refund the user
-    if (status === "failed") {
-      const wallet = await Wallet.findOne({ userId: withdrawal.userId });
-      if (wallet) {
-        wallet.balanceUSD += withdrawal.amount;
-        await wallet.save();
-      }
+    // Refund the user's wallet
+    const wallet = await Wallet.findOne({ userId: withdrawal.userId });
+    if (wallet) {
+      wallet.balanceUSD += withdrawal.amount;
+      await wallet.save();
     }
 
-    // Update status and txHash
-    withdrawal.status = status;
-    if (txHash) withdrawal.txHash = txHash;
+    // Update status
+    withdrawal.status = "failed";
+    withdrawal.rejectionReason = reason;
     await withdrawal.save();
 
-    // Send approval/rejection email
-    sendWithdrawalStatusEmail(withdrawal, status);
+    // Send rejection email
+    sendWithdrawalStatusEmail(withdrawal, "failed", reason);
 
     return NextResponse.json(
-      { message: "Withdrawal status updated", withdrawal },
+      { message: "Withdrawal rejected successfully", withdrawal },
       { status: 200, headers }
     );
   } catch (error) {
-    console.error("Approve withdrawal error:", error);
+    console.error("Reject withdrawal error:", error);
     return NextResponse.json(
       { message: "Internal server error" },
       { status: 500, headers }
@@ -497,7 +526,6 @@ async function handleUpdateBalance(req, headers, body) {
   try {
     const { userId, amount } = body;
 
-    // Validate input
     if (!userId || amount === undefined) {
       return NextResponse.json(
         {
@@ -508,7 +536,6 @@ async function handleUpdateBalance(req, headers, body) {
       );
     }
 
-    // Validate amount is a positive number
     if (typeof amount !== "number" || amount <= 0) {
       return NextResponse.json(
         {
@@ -519,13 +546,11 @@ async function handleUpdateBalance(req, headers, body) {
       );
     }
 
-    // Find or create wallet
     let wallet = await Wallet.findOne({ userId });
     if (!wallet) {
       wallet = await Wallet.create({ userId, balanceUSD: 0 });
     }
 
-    // Calculate new balance and update
     const newBalance = wallet.balanceUSD + amount;
     wallet.balanceUSD = newBalance;
     await wallet.save();
@@ -551,7 +576,7 @@ async function handleUpdateBalance(req, headers, body) {
   }
 }
 
-// Email functions (keep all your email template functions as they are)
+// Email functions with professional deposit-style templates
 async function sendFundingRequestEmails(body, referenceNumber) {
   try {
     const transport = nodemailer.createTransport({
@@ -568,7 +593,7 @@ async function sendFundingRequestEmails(body, referenceNumber) {
     const userMailOptions = {
       from: process.env.MAIL_USER,
       to: body.email,
-      subject: "✅ Deposit Submitted - WealthWise",
+      subject: "Funding Request Submitted - WealthGrower Finance Bank",
       html: fundingRequestEmailTemplate(body, referenceNumber),
     };
 
@@ -576,8 +601,8 @@ async function sendFundingRequestEmails(body, referenceNumber) {
     const adminMailOptions = {
       from: process.env.MAIL_USER,
       to: process.env.ADMIN_MAIL,
-      subject: "Deposit Request Submitted",
-      text: `A user: ${body.email} just submitted a deposit request on your platform`,
+      subject: "New Funding Request Submitted",
+      html: adminFundingNotificationTemplate(body, referenceNumber),
     };
 
     await transport.sendMail(userMailOptions);
@@ -604,15 +629,15 @@ async function sendWithdrawalEmails(withdrawal, body) {
     const userMailOptions = {
       from: process.env.MAIL_USER,
       to: body.userEmail,
-      subject: "We've Received Your Withdrawal – Now Processing",
+      subject: "Withdrawal Request Received - WealthGrower Finance Bank",
       html: getWithdrawalTemplate(body),
     };
 
     const adminMailOptions = {
       from: process.env.MAIL_USER,
       to: process.env.ADMIN_MAIL,
-      subject: `Withdrawal Submitted`,
-      text: `A User just submitted Withdrawal`,
+      subject: "New Withdrawal Request Submitted",
+      html: adminWithdrawalNotificationTemplate(withdrawal, body),
     };
 
     await transport.sendMail(userMailOptions);
@@ -624,7 +649,7 @@ async function sendWithdrawalEmails(withdrawal, body) {
   }
 }
 
-async function sendWithdrawalStatusEmail(withdrawal, status) {
+async function sendWithdrawalStatusEmail(withdrawal, status, reason = "") {
   try {
     const transport = nodemailer.createTransport({
       host: process.env.MAIL_HOST,
@@ -640,17 +665,13 @@ async function sendWithdrawalStatusEmail(withdrawal, status) {
       from: process.env.MAIL_USER,
       to: withdrawal.email,
       subject:
-        status === "failed"
-          ? "⚠️ WealthWise: Your Withdrawal Request Was Rejected"
-          : "🔔 WealthWise: Your Withdrawal Has Been Approved",
+        status === "approved"
+          ? "Withdrawal Approved - WealthGrower Finance Bank"
+          : "Withdrawal Update - WealthGrower Finance Bank",
       html:
-        status === "failed"
-          ? withdrawalRejectEmailTemplate(withdrawal.name, withdrawal.amount)
-          : withdrawalApprovedEmailTemplate(
-              withdrawal.name,
-              withdrawal.amount,
-              withdrawal.txHash
-            ),
+        status === "approved"
+          ? withdrawalApprovedEmailTemplate(withdrawal)
+          : withdrawalFailedEmailTemplate(withdrawal, reason),
     };
 
     await transport.sendMail(userMailOptions);
@@ -728,59 +749,233 @@ function getWithdrawalTemplate(body) {
   }
 }
 
-const fundingRequestEmailTemplate = (req, referenceNumber) => {
+// Professional deposit-style email templates
+const fundingRequestEmailTemplate = (body, referenceNumber) => {
   return `
-  <!DOCTYPE html>
-  <html>
-    <body style="margin:0; padding:0; background-color:#e5f1fb; font-family:Arial, sans-serif;">
-      <div style="max-width:600px; margin:40px auto; background:#ffffff; border:2px solid #004aad; border-radius:8px; padding:30px;">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Funding Request Submitted - WealthGrower Finance</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Arial, Helvetica, sans-serif; background-color: #f8fafc; color: #333333; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+  <table width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f8fafc;">
+    <tr>
+      <td align="center" style="padding: 40px 15px;">
+        <!-- Email Container -->
+        <table width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);">
+          <!-- Header -->
+          <tr>
+            <td style="background-color: #50626a; padding: 30px; text-align: center; border-bottom: 4px solid #3a4a52;">
+              <a href="#" style="display: inline-block; color: #ffffff; font-size: 32px; font-weight: 700; text-decoration: none; letter-spacing: -0.5px;">
+                WealthGrower
+                <span style="display: block; font-size: 16px; font-weight: 400; margin-top: 8px; opacity: 0.9;">Finance Bank</span>
+              </a>
+            </td>
+          </tr>
 
-        <div style="text-align:center; margin-bottom:30px;">
-          <img src="https://wealthwise-olive.vercel.app/static/media/mobilewealth.8bf93fd7d2dff4d41d7d.png" alt="CoresMarket Logo" style="width:150px;">
-        </div>
+          <!-- Content -->
+          <tr>
+            <td style="padding: 40px;">
+              <div style="text-align: center; margin-bottom: 30px;">
+                <div style="font-size: 48px; margin-bottom: 20px;">📥</div>
+                <h2 style="font-size: 28px; margin-bottom: 15px; color: #50626a; font-weight: 700;">Funding Request Submitted</h2>
+                <p style="font-size: 18px; color: #555555; margin: 0;">Your request is now under review</p>
+              </div>
 
-        <h2 style="color:#1c1c1c; text-align:start; margin-bottom:10px;">
-          Funding Request 
-          <span style="background:#facc15; color:#000; padding:2px 6px; border-radius:4px;">Submitted</span>
-        </h2>
+              <h2 style="font-size: 20px; margin-bottom: 25px; color: #50626a; font-weight: 600;">Dear ${
+                body.name
+              },</h2>
 
-        <p style="color:#1c1c1c; font-size:15px;">Dear <strong>${req.body.name}</strong>,</p>
+              <p style="line-height: 1.7; margin-bottom: 25px; font-size: 16px; color: #555555;">
+                Thank you for submitting your funding request. We have successfully received your transaction details and they are now under review by our finance team.
+              </p>
 
-        <p style="color:#16a34a; font-weight:600; font-size:15px;">
-          Your funding request has been received and is pending admin approval.
-        </p>
+              <div style="background-color: #f8f9fa; border-left: 5px solid #50626a; padding: 25px; margin: 30px 0; border-radius: 0 8px 8px 0;">
+                <h3 style="margin-top: 0; color: #50626a; font-size: 18px; margin-bottom: 20px;">Request Details</h3>
 
-        <ul style="color:#1c1c1c; font-size:15px; list-style:none; padding:0; margin:20px 0; line-height:1.6;">
-          <li><strong>Amount:</strong> $${req.body.amount} USD</li>
-          <li><strong>Transaction Type:</strong> ${req.body.transactionType}</li>
-          <li><strong>Reference Number:</strong> ${referenceNumber}</li>
-          <li><strong>Status:</strong> Pending Approval</li>
-        </ul>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Reference Number:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${referenceNumber}</div>
+                </div>
 
-        <p style="color:#1c1c1c; font-size:15px;">
-          You will be notified once your request is reviewed. You can check your account dashboard for updates: 
-          <a href="https://www.coresmarket.com/auth/login" style="color:#2563eb; text-decoration:none;">Login Here</a>.
-        </p>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Amount:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">$${
+                    body.amount
+                  } USD</div>
+                </div>
 
-        <p style="color:#1c1c1c; font-size:15px;">
-          If you have any questions, feel free to reach out to us at 
-          <a href="mailto:support@coresmarket.com" style="color:#2563eb;">support@coresmarket.com</a> 
-          or visit 
-          <a href="https://www.coresmarket.com" style="color:#2563eb;">www.coresmarket.com</a>.
-        </p>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Transaction Type:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${
+                    body.transactionType
+                  }</div>
+                </div>
 
-        <p style="color:#1c1c1c; font-size:15px;">
-          Happy trading from all of us at <strong>coresmarket</strong>!
-        </p>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Submission Date:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">
+                    ${new Date().toLocaleDateString("en-US", {
+                      year: "numeric",
+                      month: "long",
+                      day: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </div>
+                </div>
 
-        <p style="font-weight:bold; color:#004aad;">Best Wishes,<br>coresmarket</p>
+                <div style="display: inline-block; padding: 8px 16px; background-color: #fff3cd; color: #856404; border-radius: 6px; font-size: 14px; font-weight: 600; margin-top: 15px; border: 1px solid #ffeaa7;">
+                  Status: Pending Review
+                </div>
+              </div>
 
-        <div style="text-align:center; font-size:12px; color:#666; margin-top:30px;">
-          &copy; 2025 coresmarket. All rights reserved.
-        </div>
-      </div>
-    </body>
-  </html>
+              <p style="line-height: 1.7; margin-bottom: 25px; font-size: 16px; color: #555555;">
+                Our team will verify your funding request within 1-2 business hours. You will receive another email notification once your request has been processed and the funds are available in your account.
+              </p>
+
+              <div style="margin-top: 35px; padding-top: 25px; border-top: 1px solid #eaeaea;">
+                <h3 style="color: #50626a; margin-bottom: 20px; font-size: 18px; font-weight: 600;">What to Expect Next</h3>
+                <ul style="padding-left: 20px; margin: 0;">
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    Our finance team will verify your transaction details
+                  </li>
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    We'll confirm the funding amount and source
+                  </li>
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    You'll receive an approval notification email
+                  </li>
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    Funds will be credited to your account immediately after approval
+                  </li>
+                </ul>
+              </div>
+
+              <div style="background-color: #f0f7ff; padding: 20px; border-radius: 8px; margin-top: 25px; border: 1px solid #e1f0ff;">
+                <h4 style="color: #50626a; margin-bottom: 10px; font-size: 16px;">Need Assistance?</h4>
+                <p style="margin: 0; color: #555555; line-height: 1.6;">
+                  If you have any questions about your funding request or need to update your submission, please contact our support team at
+                  <a href="mailto:support@wealthgrowerfinance.org" style="color: #50626a; text-decoration: none; font-weight: 500;">support@wealthgrowerfinance.org</a>
+                  or call us at +1 (555) 123-4567.
+                </p>
+              </div>
+
+              <div style="background-color: #fff8e6; padding: 15px; border-radius: 6px; margin-top: 20px; font-size: 13px; color: #856404; border: 1px solid #ffeaa7;">
+                <strong>Security Notice:</strong> For your protection, please do not share your reference number or transaction details with anyone. WealthGrower Finance Bank will never ask for your password or sensitive information via email.
+              </div>
+
+              <p style="line-height: 1.7; margin-top: 25px; font-size: 16px; color: #555555;">
+                Best regards,<br />
+                <strong>The WealthGrower Finance Bank Team</strong>
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #f5f7f9; padding: 30px; text-align: center; font-size: 14px; color: #666666; border-top: 1px solid #eaeaea;">
+              <p style="margin: 0;">
+                &copy; ${new Date().getFullYear()} WealthGrower Finance Bank. All rights reserved.
+              </p>
+              <div style="margin-top: 20px; line-height: 1.6;">
+                <p style="margin: 0;">
+                  WealthGrower Finance Bank | 123 Financial District, City, Country
+                </p>
+                <p style="margin: 0;">
+                  Email:
+                  <a href="mailto:support@wealthgrowerfinance.org" style="color: #50626a; text-decoration: none; font-weight: 500;">support@wealthgrowerfinance.org</a>
+                  | Phone: +1 (555) 123-4567
+                </p>
+                <p style="margin-top: 15px; font-size: 12px; color: #888;">
+                  This email was sent automatically. Please do not reply to this message.
+                </p>
+              </div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `;
+};
+
+const adminFundingNotificationTemplate = (body, referenceNumber) => {
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>New Funding Request - Admin Notification</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Arial, Helvetica, sans-serif; background-color: #f8fafc; color: #333333; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+  <table width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f8fafc;">
+    <tr>
+      <td align="center" style="padding: 40px 15px;">
+        <table width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);">
+          <tr>
+            <td style="background-color: #50626a; padding: 30px; text-align: center; border-bottom: 4px solid #3a4a52;">
+              <a href="#" style="display: inline-block; color: #ffffff; font-size: 32px; font-weight: 700; text-decoration: none; letter-spacing: -0.5px;">
+                WealthGrower
+                <span style="display: block; font-size: 16px; font-weight: 400; margin-top: 8px; opacity: 0.9;">Finance Bank</span>
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 40px;">
+              <div style="text-align: center; margin-bottom: 30px;">
+                <div style="font-size: 48px; margin-bottom: 20px;">📥</div>
+                <h2 style="font-size: 28px; margin-bottom: 15px; color: #50626a; font-weight: 700;">New Funding Request</h2>
+                <p style="font-size: 18px; color: #555555; margin: 0;">Requires Admin Approval</p>
+              </div>
+
+              <div style="background-color: #f8f9fa; border-left: 5px solid #50626a; padding: 25px; margin: 30px 0; border-radius: 0 8px 8px 0;">
+                <h3 style="margin-top: 0; color: #50626a; font-size: 18px; margin-bottom: 20px;">Request Details</h3>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Customer:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${body.name}</div>
+                </div>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Email:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${body.email}</div>
+                </div>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Amount:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">$${body.amount} USD</div>
+                </div>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Reference:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${referenceNumber}</div>
+                </div>
+                <div style="display: inline-block; padding: 8px 16px; background-color: #fff3cd; color: #856404; border-radius: 6px; font-size: 14px; font-weight: 600; margin-top: 15px; border: 1px solid #ffeaa7;">
+                  Status: Awaiting Review
+                </div>
+              </div>
+
+              <div style="background-color: #f0f7ff; padding: 20px; border-radius: 8px; margin-top: 25px; border: 1px solid #e1f0ff;">
+                <h4 style="color: #50626a; margin-bottom: 10px; font-size: 16px;">Action Required</h4>
+                <p style="margin: 0; color: #555555; line-height: 1.6;">
+                  Please review this funding request in the admin dashboard and approve or reject it accordingly.
+                </p>
+              </div>
+
+              <p style="line-height: 1.7; margin-top: 25px; font-size: 16px; color: #555555;">
+                Best regards,<br />
+                <strong>WealthGrower Finance Bank System</strong>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
   `;
 };
 
@@ -792,76 +987,101 @@ const withdrawalTemplateForCrypto = (
   DESTINATION
 ) => {
   return `
-  <!DOCTYPE html>
-  <html>
-    <head>
-      <meta charset="UTF-8">
-      <title>Crypto Withdrawal Confirmation</title>
-    </head>
-    <body style="margin:0; padding:0; background-color:#e5f1fb; font-family:Arial, sans-serif;">
-      <div style="max-width:600px; margin:40px auto; background:#ffffff; border:2px solid #004aad; border-radius:8px; padding:30px;">
-
-        <div style="text-align:center; margin-bottom:30px;">
-          <img src="https://wealthwise-olive.vercel.app/static/media/mobilewealth.8bf93fd7d2dff4d41d7d.png" alt="CoresMarket Logo" style="width:150px;">
-        </div>
-
-        <h2 style="color:#1c1c1c; text-align:start;">
-          🚀 Crypto Withdrawal Request
-        </h2>
-
-        <p style="font-size:15px; color:#1c1c1c;">
-          Hello <strong>${NAME.toUpperCase()}</strong>,
-        </p>
-
-        <p style="font-size:15px; color:#1c1c1c;">
-          We've received your crypto withdrawal request and it is currently being processed.
-        </p>
-
-        <p style="font-size:15px; font-weight:bold; color:#1c1c1c;">Withdrawal Details:</p>
-
-        <table style="width:100%; border-collapse:collapse; font-size:15px; color:#1c1c1c;">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Withdrawal Request - WealthGrower Finance</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Arial, Helvetica, sans-serif; background-color: #f8fafc; color: #333333; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+  <table width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f8fafc;">
+    <tr>
+      <td align="center" style="padding: 40px 15px;">
+        <table width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);">
           <tr>
-            <td style="padding:8px; font-weight:bold;">Currency:</td>
-            <td style="padding:8px;">${CURRENCY}</td>
+            <td style="background-color: #50626a; padding: 30px; text-align: center; border-bottom: 4px solid #3a4a52;">
+              <a href="#" style="display: inline-block; color: #ffffff; font-size: 32px; font-weight: 700; text-decoration: none; letter-spacing: -0.5px;">
+                WealthGrower
+                <span style="display: block; font-size: 16px; font-weight: 400; margin-top: 8px; opacity: 0.9;">Finance Bank</span>
+              </a>
+            </td>
           </tr>
           <tr>
-            <td style="padding:8px; font-weight:bold;">Amount:</td>
-            <td style="padding:8px;">${AMOUNT}</td>
-          </tr>
-          <tr>
-            <td style="padding:8px; font-weight:bold;">Network:</td>
-            <td style="padding:8px;">${NETWORK}</td>
-          </tr>
-          <tr>
-            <td style="padding:8px; font-weight:bold;">Destination Address:</td>
-            <td style="padding:8px;">${DESTINATION}</td>
-          </tr>
-          <tr>
-            <td style="padding:8px; font-weight:bold;">Status:</td>
-            <td style="padding:8px; color:orange;">Pending</td>
+            <td style="padding: 40px;">
+              <div style="text-align: center; margin-bottom: 30px;">
+                <div style="font-size: 48px; margin-bottom: 20px;">🚀</div>
+                <h2 style="font-size: 28px; margin-bottom: 15px; color: #50626a; font-weight: 700;">Crypto Withdrawal Request</h2>
+                <p style="font-size: 18px; color: #555555; margin: 0;">Your request is being processed</p>
+              </div>
+
+              <h2 style="font-size: 20px; margin-bottom: 25px; color: #50626a; font-weight: 600;">Dear ${NAME},</h2>
+
+              <p style="line-height: 1.7; margin-bottom: 25px; font-size: 16px; color: #555555;">
+                We've received your cryptocurrency withdrawal request and it is currently being processed by our team.
+              </p>
+
+              <div style="background-color: #f8f9fa; border-left: 5px solid #50626a; padding: 25px; margin: 30px 0; border-radius: 0 8px 8px 0;">
+                <h3 style="margin-top: 0; color: #50626a; font-size: 18px; margin-bottom: 20px;">Withdrawal Details</h3>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Currency:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${CURRENCY}</div>
+                </div>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Amount:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${AMOUNT}</div>
+                </div>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Network:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${NETWORK}</div>
+                </div>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Destination:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px; word-break: break-all;">${DESTINATION}</div>
+                </div>
+                <div style="display: inline-block; padding: 8px 16px; background-color: #fff3cd; color: #856404; border-radius: 6px; font-size: 14px; font-weight: 600; margin-top: 15px; border: 1px solid #ffeaa7;">
+                  Status: Under Review
+                </div>
+              </div>
+
+              <div style="margin-top: 35px; padding-top: 25px; border-top: 1px solid #eaeaea;">
+                <h3 style="color: #50626a; margin-bottom: 20px; font-size: 18px; font-weight: 600;">Processing Timeline</h3>
+                <ul style="padding-left: 20px; margin: 0;">
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    Security verification and approval process
+                  </li>
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    Network confirmation and transaction processing
+                  </li>
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    You'll receive confirmation with transaction hash
+                  </li>
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    Funds typically arrive within 1-2 hours after approval
+                  </li>
+                </ul>
+              </div>
+
+              <div style="background-color: #f0f7ff; padding: 20px; border-radius: 8px; margin-top: 25px; border: 1px solid #e1f0ff;">
+                <h4 style="color: #50626a; margin-bottom: 10px; font-size: 16px;">Need Assistance?</h4>
+                <p style="margin: 0; color: #555555; line-height: 1.6;">
+                  If you have any questions about your withdrawal, please contact our support team at
+                  <a href="mailto:support@wealthgrowerfinance.org" style="color: #50626a; text-decoration: none; font-weight: 500;">support@wealthgrowerfinance.org</a>
+                </p>
+              </div>
+
+              <p style="line-height: 1.7; margin-top: 25px; font-size: 16px; color: #555555;">
+                Best regards,<br />
+                <strong>The WealthGrower Finance Bank Team</strong>
+              </p>
+            </td>
           </tr>
         </table>
-
-        <p style="font-size:15px; color:#1c1c1c;">
-          Once the transaction is complete, you will receive a confirmation with your transaction hash (TxID).
-        </p>
-
-        <p style="font-size:15px; color:#1c1c1c;">
-          Thank you for using <strong>CoresMarket</strong>.
-        </p>
-
-        <p style="font-size:12px; color:#888; margin-top:20px;">
-          If you did not authorize this request, please contact support immediately at 
-          <a href="mailto:support@coresmarket.com" style="color:#2563eb;">support@coresmarket.com</a>.
-        </p>
-
-        <div style="text-align:center; font-size:12px; color:#666; margin-top:30px;">
-          &copy; 2025 coresmarket. All rights reserved.
-        </div>
-
-      </div>
-    </body>
-  </html>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
   `;
 };
 
@@ -880,253 +1100,436 @@ const withdrawalTemplateForBank = (
   country
 ) => {
   return `
-  <!DOCTYPE html>
-  <html>
-    <head>
-      <meta charset="UTF-8">
-      <title>Bank Withdrawal Confirmation</title>
-    </head>
-    <body style="margin:0; padding:0; background-color:#e5f1fb; font-family:Arial, sans-serif;">
-      <div style="max-width:600px; margin:40px auto; background:#ffffff; border:2px solid #004aad; border-radius:8px; padding:30px;">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bank Withdrawal Request - WealthGrower Finance</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Arial, Helvetica, sans-serif; background-color: #f8fafc; color: #333333; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+  <table width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f8fafc;">
+    <tr>
+      <td align="center" style="padding: 40px 15px;">
+        <table width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);">
+          <tr>
+            <td style="background-color: #50626a; padding: 30px; text-align: center; border-bottom: 4px solid #3a4a52;">
+              <a href="#" style="display: inline-block; color: #ffffff; font-size: 32px; font-weight: 700; text-decoration: none; letter-spacing: -0.5px;">
+                WealthGrower
+                <span style="display: block; font-size: 16px; font-weight: 400; margin-top: 8px; opacity: 0.9;">Finance Bank</span>
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 40px;">
+              <div style="text-align: center; margin-bottom: 30px;">
+                <div style="font-size: 48px; margin-bottom: 20px;">🏦</div>
+                <h2 style="font-size: 28px; margin-bottom: 15px; color: #50626a; font-weight: 700;">Bank Withdrawal Request</h2>
+                <p style="font-size: 18px; color: #555555; margin: 0;">Your request is being processed</p>
+              </div>
 
-        <div style="text-align:center; margin-bottom:30px;">
-          <img src="https://wealthwise-olive.vercel.app/static/media/mobilewealth.8bf93fd7d2dff4d41d7d.png" alt="CoresMarket Logo" style="width:150px; ">
-        </div>
+              <h2 style="font-size: 20px; margin-bottom: 25px; color: #50626a; font-weight: 600;">Dear ${NAME},</h2>
 
-        <h2 style="color:#1c1c1c; text-align:start;">💸 Bank Withdrawal Request</h2>
+              <p style="line-height: 1.7; margin-bottom: 25px; font-size: 16px; color: #555555;">
+                We've received your bank withdrawal request and it is currently being processed by our finance team.
+              </p>
 
-        <p style="color:#1c1c1c; font-size:15px;">
-          Hello <strong>${NAME}</strong>,
-        </p>
+              <div style="background-color: #f8f9fa; border-left: 5px solid #50626a; padding: 25px; margin: 30px 0; border-radius: 0 8px 8px 0;">
+                <h3 style="margin-top: 0; color: #50626a; font-size: 18px; margin-bottom: 20px;">Withdrawal Details</h3>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Amount:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">$${AMOUNT} USD</div>
+                </div>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Bank Name:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${bankName}</div>
+                </div>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Account Name:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${accountName}</div>
+                </div>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Account Number:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${accountNumber}</div>
+                </div>
+                <div style="display: inline-block; padding: 8px 16px; background-color: #fff3cd; color: #856404; border-radius: 6px; font-size: 14px; font-weight: 600; margin-top: 15px; border: 1px solid #ffeaa7;">
+                  Status: Under Review
+                </div>
+              </div>
 
-        <p style="color:#1c1c1c; font-size:15px;">
-          We’ve received your withdrawal request. Our team is currently processing your transaction.
-        </p>
+              <div style="margin-top: 35px; padding-top: 25px; border-top: 1px solid #eaeaea;">
+                <h3 style="color: #50626a; margin-bottom: 20px; font-size: 18px; font-weight: 600;">Processing Timeline</h3>
+                <ul style="padding-left: 20px; margin: 0;">
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    Security verification and approval process (1-2 hours)
+                  </li>
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    Bank transfer processing (1-3 business days)
+                  </li>
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    You'll receive confirmation once funds are sent
+                  </li>
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    Additional bank processing time may apply
+                  </li>
+                </ul>
+              </div>
 
-        <p style="font-weight:bold; font-size:15px; color:#1c1c1c;">Withdrawal Details:</p>
+              <div style="background-color: #f0f7ff; padding: 20px; border-radius: 8px; margin-top: 25px; border: 1px solid #e1f0ff;">
+                <h4 style="color: #50626a; margin-bottom: 10px; font-size: 16px;">Need Assistance?</h4>
+                <p style="margin: 0; color: #555555; line-height: 1.6;">
+                  If you have any questions about your withdrawal, please contact our support team at
+                  <a href="mailto:support@wealthgrowerfinance.org" style="color: #50626a; text-decoration: none; font-weight: 500;">support@wealthgrowerfinance.org</a>
+                </p>
+              </div>
 
-        <table style="width:100%; border-collapse:collapse; font-size:15px; color:#1c1c1c;">
-          <tr><td style="padding:8px; font-weight:bold;">Currency:</td><td style="padding:8px;">USD</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Amount:</td><td style="padding:8px;">$${AMOUNT} USD</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Bank Name:</td><td style="padding:8px;">${bankName}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Account Name:</td><td style="padding:8px;">${accountName}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Account Number:</td><td style="padding:8px;">${accountNumber}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Account Type:</td><td style="padding:8px;">${accountType}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">IBAN:</td><td style="padding:8px;">${ibanNumber}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">SWIFT Code:</td><td style="padding:8px;">${swiftCode}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">BANK ADDRESS:</td><td style="padding:8px;">${bankAddress}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">COUNTRY:</td><td style="padding:8px;">${country}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Transfer Type:</td><td style="padding:8px;">${transferType}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Status:</td><td style="padding:8px; color:orange;">Pending</td></tr>
+              <p style="line-height: 1.7; margin-top: 25px; font-size: 16px; color: #555555;">
+                Best regards,<br />
+                <strong>The WealthGrower Finance Bank Team</strong>
+              </p>
+            </td>
+          </tr>
         </table>
-
-        <p style="font-size:15px; color:#1c1c1c;">
-          We’ll notify you once your funds have been transferred. Processing typically takes 1–3 business days.
-        </p>
-
-        <p style="font-size:15px; color:#1c1c1c;">
-          Thank you for choosing <strong>WealthWise</strong>.
-        </p>
-
-        <p style="font-size:12px; color:#888; margin-top:20px;">
-          If this request was not made by you, please contact our support team immediately at 
-          <a href="mailto:support@wealthwise.online" style="color:#2563eb;">support@wealthwise.online</a>.
-        </p>
-
-        <div style="text-align:center; font-size:12px; color:#666; margin-top:30px;">
-          &copy; 2025 WealthWise Bank. All rights reserved.
-        </div>
-
-      </div>
-    </body>
-  </html>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
   `;
 };
 
-const withdrawalApprovedEmailTemplate = (userName, amount, txHash) => {
+const withdrawalApprovedEmailTemplate = (withdrawal) => {
   return `
-  <!DOCTYPE html>
-  <html>
-    <head>
-      <meta charset="UTF-8">
-      <title>Withdrawal Approved</title>
-    </head>
-    <body style="margin:0; padding:0; background-color:#e5f1fb; font-family:Arial, sans-serif;">
-      <div style="max-width:600px; margin:40px auto; background:#ffffff; border:2px solid #004aad; border-radius:8px; padding:30px;">
-
-        <div style="text-align:center; margin-bottom:30px;">
-          <img src="https://wealthwise-olive.vercel.app/static/media/mobilewealth.8bf93fd7d2dff4d41d7d.png" alt="CoresMarket Logo" style="width:150px;">
-        </div>
-
-        <h2 style="color:#1c1c1c; text-align:start;">
-          ✅ Withdrawal Approved
-        </h2>
-
-        <p style="color:#1c1c1c; font-size:15px;">
-          Hello <strong>${userName}</strong>,
-        </p>
-
-        <p style="color:#1c1c1c; font-size:15px;">
-          Your withdrawal request has been <strong style="color:green;">approved</strong> and processed successfully.
-        </p>
-
-        <p style="font-weight:bold; font-size:15px; color:#1c1c1c;">Transaction Details:</p>
-
-        <table style="width:100%; border-collapse:collapse; font-size:15px; color:#1c1c1c;">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Withdrawal Approved - WealthGrower Finance</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Arial, Helvetica, sans-serif; background-color: #f8fafc; color: #333333; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+  <table width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f8fafc;">
+    <tr>
+      <td align="center" style="padding: 40px 15px;">
+        <table width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);">
           <tr>
-            <td style="padding:8px; font-weight:bold;">Amount:</td>
-            <td style="padding:8px;">$${amount} USD</td>
+            <td style="background-color: #50626a; padding: 30px; text-align: center; border-bottom: 4px solid #3a4a52;">
+              <a href="#" style="display: inline-block; color: #ffffff; font-size: 32px; font-weight: 700; text-decoration: none; letter-spacing: -0.5px;">
+                WealthGrower
+                <span style="display: block; font-size: 16px; font-weight: 400; margin-top: 8px; opacity: 0.9;">Finance Bank</span>
+              </a>
+            </td>
           </tr>
           <tr>
-            <td style="padding:8px; font-weight:bold;">Transaction Hash:</td>
-            <td style="padding:8px;">${txHash}</td>
-          </tr>
-          <tr>
-            <td style="padding:8px; font-weight:bold;">Status:</td>
-            <td style="padding:8px; color:green;">Approved</td>
+            <td style="padding: 40px;">
+              <div style="text-align: center; margin-bottom: 30px;">
+                <div style="font-size: 48px; margin-bottom: 20px;">✅</div>
+                <h2 style="font-size: 28px; margin-bottom: 15px; color: #27ae60; font-weight: 700;">Withdrawal Approved!</h2>
+                <p style="font-size: 18px; color: #555555; margin: 0;">Your funds have been processed</p>
+              </div>
+
+              <h2 style="font-size: 20px; margin-bottom: 25px; color: #50626a; font-weight: 600;">Dear ${
+                withdrawal.name
+              },</h2>
+
+              <p style="line-height: 1.7; margin-bottom: 25px; font-size: 16px; color: #555555;">
+                We are pleased to inform you that your withdrawal request has been approved and processed successfully.
+              </p>
+
+              <div style="background-color: #f8f9fa; border-left: 5px solid #27ae60; padding: 25px; margin: 30px 0; border-radius: 0 8px 8px 0;">
+                <h3 style="margin-top: 0; color: #50626a; font-size: 18px; margin-bottom: 20px;">Transaction Details</h3>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Amount:</div>
+                  <div style="font-weight: 500; color: #27ae60; font-size: 15px;">$${
+                    withdrawal.amount
+                  } USD</div>
+                </div>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Transaction Hash:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px; word-break: break-all;">${
+                    withdrawal.txHash
+                  }</div>
+                </div>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Approval Date:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">
+                    ${new Date().toLocaleDateString("en-US", {
+                      year: "numeric",
+                      month: "long",
+                      day: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </div>
+                </div>
+                <div style="display: inline-block; padding: 8px 16px; background-color: #d4edda; color: #155724; border-radius: 6px; font-size: 14px; font-weight: 600; margin-top: 15px; border: 1px solid #c3e6cb;">
+                  Status: Approved ✅
+                </div>
+              </div>
+
+              <div style="background-color: #f0f7ff; padding: 20px; border-radius: 8px; margin-top: 25px; border: 1px solid #e1f0ff;">
+                <h4 style="color: #50626a; margin-bottom: 10px; font-size: 16px;">Delivery Time</h4>
+                <p style="margin: 0; color: #555555; line-height: 1.6;">
+                  ${
+                    withdrawal.transferType === "Cryptocurrency"
+                      ? "Cryptocurrency transfers typically arrive within 1-2 hours depending on network congestion."
+                      : "Bank transfers typically take 1-3 business days to reflect in your account."
+                  }
+                </p>
+              </div>
+
+              <p style="line-height: 1.7; margin-top: 25px; font-size: 16px; color: #555555;">
+                Thank you for choosing WealthGrower Finance Bank.<br />
+                <strong>The WealthGrower Finance Bank Team</strong>
+              </p>
+            </td>
           </tr>
         </table>
-
-        <p style="color:#1c1c1c; font-size:15px;">
-          If this transaction was not authorized by you, please contact our support team immediately at 
-          <a href="mailto:support@wealthwise.online" style="color:#2563eb;">support@wealthwise.online</a>.
-        </p>
-
-        <p style="font-size:15px; color:#1c1c1c;">
-          Thank you for using <strong>WealthWise</strong>.
-        </p>
-
-        <p style="font-size:12px; color:#888;">
-          This is an automated message. Do not reply directly.
-        </p>
-
-        <div style="text-align:center; font-size:12px; color:#666; margin-top:30px;">
-          &copy; 2025 WealthWise Bank. All rights reserved.
-        </div>
-
-      </div>
-    </body>
-  </html>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
   `;
 };
 
-const withdrawalRejectEmailTemplate = (userName, amount) => {
+const withdrawalFailedEmailTemplate = (withdrawal, reason) => {
   return `
-  <!DOCTYPE html>
-  <html>
-    <head>
-      <meta charset="UTF-8">
-      <title>Withdrawal Rejected</title>
-    </head>
-    <body style="margin:0; padding:0; background-color:#e5f1fb; font-family:Arial, sans-serif;">
-      <div style="max-width:600px; margin:40px auto; background:#ffffff; border:2px solid #004aad; border-radius:8px; padding:30px;">
-
-        <div style="text-align:center; margin-bottom:30px;">
-          <img src="https://wealthwise-olive.vercel.app/static/media/mobilewealth.8bf93fd7d2dff4d41d7d.png" alt="CoresMarket Logo" style="width:150px;">
-        </div>
-
-        <h2 style="color:#e53935; text-align:start;">❌ Withdrawal Rejected</h2>
-
-        <p style="color:#1c1c1c; font-size:15px;">
-          Hello <strong>${userName}</strong>,
-        </p>
-
-        <p style="color:#1c1c1c; font-size:15px;">
-          Unfortunately, your withdrawal request has been <strong style="color:#e53935;">rejected</strong>. The funds have been refunded to your wallet.
-        </p>
-
-        <p style="font-weight:bold; font-size:15px; color:#1c1c1c;">Withdrawal Details:</p>
-
-        <table style="width:100%; border-collapse:collapse; font-size:15px; color:#1c1c1c;">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Withdrawal Update - WealthGrower Finance</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Arial, Helvetica, sans-serif; background-color: #f8fafc; color: #333333; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+  <table width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f8fafc;">
+    <tr>
+      <td align="center" style="padding: 40px 15px;">
+        <table width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);">
           <tr>
-            <td style="padding:8px; font-weight:bold;">Amount:</td>
-            <td style="padding:8px;">$${amount} USD</td>
+            <td style="background-color: #50626a; padding: 30px; text-align: center; border-bottom: 4px solid #3a4a52;">
+              <a href="#" style="display: inline-block; color: #ffffff; font-size: 32px; font-weight: 700; text-decoration: none; letter-spacing: -0.5px;">
+                WealthGrower
+                <span style="display: block; font-size: 16px; font-weight: 400; margin-top: 8px; opacity: 0.9;">Finance Bank</span>
+              </a>
+            </td>
           </tr>
           <tr>
-            <td style="padding:8px; font-weight:bold;">Status:</td>
-            <td style="padding:8px; color:#e53935;">Rejected</td>
+            <td style="padding: 40px;">
+              <div style="text-align: center; margin-bottom: 30px;">
+                <div style="font-size: 48px; margin-bottom: 20px;">⚠️</div>
+                <h2 style="font-size: 28px; margin-bottom: 15px; color: #e74c3c; font-weight: 700;">Withdrawal Not Processed</h2>
+                <p style="font-size: 18px; color: #555555; margin: 0;">Important Update Regarding Your Request</p>
+              </div>
+
+              <h2 style="font-size: 20px; margin-bottom: 25px; color: #50626a; font-weight: 600;">Dear ${
+                withdrawal.name
+              },</h2>
+
+              <p style="line-height: 1.7; margin-bottom: 25px; font-size: 16px; color: #555555;">
+                We regret to inform you that we were unable to process your withdrawal request. The funds have been refunded to your wallet.
+              </p>
+
+              <div style="background-color: #f8f9fa; border-left: 5px solid #e74c3c; padding: 25px; margin: 30px 0; border-radius: 0 8px 8px 0;">
+                <h3 style="margin-top: 0; color: #50626a; font-size: 18px; margin-bottom: 20px;">Request Details</h3>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Amount:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">$${
+                    withdrawal.amount
+                  } USD</div>
+                </div>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Transfer Type:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${
+                    withdrawal.transferType
+                  }</div>
+                </div>
+                ${
+                  reason
+                    ? `
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Reason:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${reason}</div>
+                </div>
+                `
+                    : ""
+                }
+                <div style="display: inline-block; padding: 8px 16px; background-color: #f8d7da; color: #721c24; border-radius: 6px; font-size: 14px; font-weight: 600; margin-top: 15px; border: 1px solid #f5c6cb;">
+                  Status: Not Processed
+                </div>
+              </div>
+
+              <div style="background-color: #fff3cd; padding: 20px; border-radius: 8px; margin: 25px 0; border: 1px solid #ffeaa7;">
+                <h4 style="color: #856404; margin-bottom: 10px; font-size: 16px;">Funds Refunded</h4>
+                <p style="margin: 0; color: #856404; line-height: 1.6;">
+                  The amount of $${
+                    withdrawal.amount
+                  } has been refunded to your wallet balance and is available for immediate use.
+                </p>
+              </div>
+
+              <div style="background-color: #f0f7ff; padding: 20px; border-radius: 8px; margin-top: 25px; border: 1px solid #e1f0ff;">
+                <h4 style="color: #50626a; margin-bottom: 10px; font-size: 16px;">Next Steps</h4>
+                <p style="margin: 0; color: #555555; line-height: 1.6;">
+                  You may submit a new withdrawal request with corrected information, or contact our support team for assistance.
+                </p>
+              </div>
+
+              <p style="line-height: 1.7; margin-top: 25px; font-size: 16px; color: #555555;">
+                We apologize for any inconvenience and appreciate your understanding.<br />
+                <strong>The WealthGrower Finance Bank Team</strong>
+              </p>
+            </td>
           </tr>
         </table>
-
-        <p style="color:#1c1c1c; font-size:15px;">
-          If you believe this was in error, please contact our support team at 
-          <a href="mailto:support@wealthwise.online" style="color:#2563eb;">support@wealthwise.online</a> for more information.
-        </p>
-
-        <p style="font-size:15px; color:#1c1c1c;">
-          Thank you for your patience,<br>
-          <strong>WealthWise Support Team</strong>
-        </p>
-
-        <p style="font-size:12px; color:#888;">
-          This is an automated message. Do not reply directly.
-        </p>
-
-        <div style="text-align:center; font-size:12px; color:#666; margin-top:30px;">
-          &copy; 2025 WealthWise Bank. All rights reserved.
-        </div>
-
-      </div>
-    </body>
-  </html>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
   `;
 };
 
+const adminWithdrawalNotificationTemplate = (withdrawal, body) => {
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>New Withdrawal Request - Admin Notification</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Arial, Helvetica, sans-serif; background-color: #f8fafc; color: #333333; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+  <table width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f8fafc;">
+    <tr>
+      <td align="center" style="padding: 40px 15px;">
+        <table width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);">
+          <tr>
+            <td style="background-color: #50626a; padding: 30px; text-align: center; border-bottom: 4px solid #3a4a52;">
+              <a href="#" style="display: inline-block; color: #ffffff; font-size: 32px; font-weight: 700; text-decoration: none; letter-spacing: -0.5px;">
+                WealthGrower
+                <span style="display: block; font-size: 16px; font-weight: 400; margin-top: 8px; opacity: 0.9;">Finance Bank</span>
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 40px;">
+              <div style="text-align: center; margin-bottom: 30px;">
+                <div style="font-size: 48px; margin-bottom: 20px;">💸</div>
+                <h2 style="font-size: 28px; margin-bottom: 15px; color: #50626a; font-weight: 700;">New Withdrawal Request</h2>
+                <p style="font-size: 18px; color: #555555; margin: 0;">Requires Admin Approval</p>
+              </div>
+
+              <div style="background-color: #f8f9fa; border-left: 5px solid #50626a; padding: 25px; margin: 30px 0; border-radius: 0 8px 8px 0;">
+                <h3 style="margin-top: 0; color: #50626a; font-size: 18px; margin-bottom: 20px;">Request Details</h3>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Customer:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${withdrawal.name}</div>
+                </div>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Email:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${withdrawal.email}</div>
+                </div>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Amount:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">$${withdrawal.amount} USD</div>
+                </div>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Method:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${withdrawal.transferType}</div>
+                </div>
+                <div style="display: inline-block; padding: 8px 16px; background-color: #fff3cd; color: #856404; border-radius: 6px; font-size: 14px; font-weight: 600; margin-top: 15px; border: 1px solid #ffeaa7;">
+                  Status: Awaiting Review
+                </div>
+              </div>
+
+              <div style="background-color: #f0f7ff; padding: 20px; border-radius: 8px; margin-top: 25px; border: 1px solid #e1f0ff;">
+                <h4 style="color: #50626a; margin-bottom: 10px; font-size: 16px;">Action Required</h4>
+                <p style="margin: 0; color: #555555; line-height: 1.6;">
+                  Please review this withdrawal request in the admin dashboard and approve or reject it accordingly.
+                </p>
+              </div>
+
+              <p style="line-height: 1.7; margin-top: 25px; font-size: 16px; color: #555555;">
+                Best regards,<br />
+                <strong>WealthGrower Finance Bank System</strong>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `;
+};
+
+// PayPal, Wise, and Cash App templates follow the same structure...
 const paypalWithdrawalTemplate = (NAME, AMOUNT, paypalEmail) => {
   return `
-  <!DOCTYPE html>
-  <html>
-    <head>
-      <meta charset="UTF-8">
-      <title>PayPal Withdrawal Confirmation</title>
-    </head>
-    <body style="margin:0; padding:0; background-color:#e5f1fb; font-family:Arial, sans-serif;">
-      <div style="max-width:600px; margin:40px auto; background:#ffffff; border:2px solid #004aad; border-radius:8px; padding:30px;">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PayPal Withdrawal Request - WealthGrower Finance</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Arial, Helvetica, sans-serif; background-color: #f8fafc; color: #333333; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+  <table width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f8fafc;">
+    <tr>
+      <td align="center" style="padding: 40px 15px;">
+        <table width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);">
+          <tr>
+            <td style="background-color: #50626a; padding: 30px; text-align: center; border-bottom: 4px solid #3a4a52;">
+              <a href="#" style="display: inline-block; color: #ffffff; font-size: 32px; font-weight: 700; text-decoration: none; letter-spacing: -0.5px;">
+                WealthGrower
+                <span style="display: block; font-size: 16px; font-weight: 400; margin-top: 8px; opacity: 0.9;">Finance Bank</span>
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 40px;">
+              <div style="text-align: center; margin-bottom: 30px;">
+                <div style="font-size: 48px; margin-bottom: 20px;">💰</div>
+                <h2 style="font-size: 28px; margin-bottom: 15px; color: #50626a; font-weight: 700;">PayPal Withdrawal Request</h2>
+                <p style="font-size: 18px; color: #555555; margin: 0;">Your request is being processed</p>
+              </div>
 
-        <div style="text-align:center; margin-bottom:30px;">
-          <img src="https://wealthwise-olive.vercel.app/static/media/mobilewealth.8bf93fd7d2dff4d41d7d.png" alt="CoresMarket Logo" style="width:150px;">
-        </div>
+              <h2 style="font-size: 20px; margin-bottom: 25px; color: #50626a; font-weight: 600;">Dear ${NAME},</h2>
 
-        <h2 style="color:#1c1c1c; text-align:start;">💸 PayPal Withdrawal Request</h2>
+              <p style="line-height: 1.7; margin-bottom: 25px; font-size: 16px; color: #555555;">
+                We've received your PayPal withdrawal request and it is currently being processed by our team.
+              </p>
 
-        <p style="color:#1c1c1c; font-size:15px;">
-          Hello <strong>${NAME}</strong>,
-        </p>
+              <div style="background-color: #f8f9fa; border-left: 5px solid #50626a; padding: 25px; margin: 30px 0; border-radius: 0 8px 8px 0;">
+                <h3 style="margin-top: 0; color: #50626a; font-size: 18px; margin-bottom: 20px;">Withdrawal Details</h3>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Amount:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">$${AMOUNT} USD</div>
+                </div>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">PayPal Email:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${paypalEmail}</div>
+                </div>
+                <div style="display: inline-block; padding: 8px 16px; background-color: #fff3cd; color: #856404; border-radius: 6px; font-size: 14px; font-weight: 600; margin-top: 15px; border: 1px solid #ffeaa7;">
+                  Status: Under Review
+                </div>
+              </div>
 
-        <p style="color:#1c1c1c; font-size:15px;">
-          We’ve received your PayPal withdrawal request. Our team is currently processing your transaction.
-        </p>
-
-        <p style="font-weight:bold; font-size:15px; color:#1c1c1c;">Withdrawal Details:</p>
-
-        <table style="width:100%; border-collapse:collapse; font-size:15px; color:#1c1c1c;">
-          <tr><td style="padding:8px; font-weight:bold;">Currency:</td><td style="padding:8px;">USD</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Amount:</td><td style="padding:8px;">$${AMOUNT}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">PayPal Email:</td><td style="padding:8px;">${paypalEmail}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Transfer Method:</td><td style="padding:8px;">PayPal</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Status:</td><td style="padding:8px; color:orange;">Pending</td></tr>
+              <p style="line-height: 1.7; margin-top: 25px; font-size: 16px; color: #555555;">
+                Best regards,<br />
+                <strong>The WealthGrower Finance Bank Team</strong>
+              </p>
+            </td>
+          </tr>
         </table>
-
-        <p style="font-size:15px; color:#1c1c1c;">
-          We’ll notify you once your funds have been transferred. Processing typically takes 1–3 business days.
-        </p>
-
-        <p style="font-size:15px; color:#1c1c1c;">
-          Thank you for choosing <strong>WealthWise</strong>.
-        </p>
-
-        <p style="font-size:12px; color:#888; margin-top:20px;">
-          If this request was not made by you, please contact our support team immediately at 
-          <a href="mailto:support@wealthwise.online" style="color:#2563eb;">support@wealthwise.online</a>.
-        </p>
-
-        <div style="text-align:center; font-size:12px; color:#666; margin-top:30px;">
-          &copy; 2025 WealthWise Bank. All rights reserved.
-        </div>
-
-      </div>
-    </body>
-  </html>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
   `;
 };
 
@@ -1139,61 +1542,144 @@ const wiseWithdrawalTemplate = (
   transferType
 ) => {
   return `
-  <!DOCTYPE html>
-  <html>
-    <head>
-      <meta charset="UTF-8">
-      <title>Wise Withdrawal Confirmation</title>
-    </head>
-    <body style="margin:0; padding:0; background-color:#e5f1fb; font-family:Arial, sans-serif;">
-      <div style="max-width:600px; margin:40px auto; background:#ffffff; border:2px solid #004aad; border-radius:8px; padding:30px;">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wise Withdrawal Request - WealthGrower Finance</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Arial, Helvetica, sans-serif; background-color: #f8fafc; color: #333333; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+  <table width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f8fafc;">
+    <tr>
+      <td align="center" style="padding: 40px 15px;">
+        <table width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);">
+          <tr>
+            <td style="background-color: #50626a; padding: 30px; text-align: center; border-bottom: 4px solid #3a4a52;">
+              <a href="#" style="display: inline-block; color: #ffffff; font-size: 32px; font-weight: 700; text-decoration: none; letter-spacing: -0.5px;">
+                WealthGrower
+                <span style="display: block; font-size: 16px; font-weight: 400; margin-top: 8px; opacity: 0.9;">Finance Bank</span>
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 40px;">
+              <div style="text-align: center; margin-bottom: 30px;">
+                <div style="font-size: 48px; margin-bottom: 20px;">🌍</div>
+                <h2 style="font-size: 28px; margin-bottom: 15px; color: #50626a; font-weight: 700;">Wise Transfer Request</h2>
+                <p style="font-size: 18px; color: #555555; margin: 0;">Your international transfer is being processed</p>
+              </div>
 
-        <div style="text-align:center; margin-bottom:30px;">
-          <img src="https://wealthwise-olive.vercel.app/static/media/mobilewealth.8bf93fd7d2dff4d41d7d.png" alt="CoresMarket Logo" style="width:150px;">
-        </div>
+              <h2 style="font-size: 20px; margin-bottom: 25px; color: #50626a; font-weight: 600;">Dear ${name},</h2>
 
-        <h2 style="color:#1c1c1c; text-align:start;">💸 Wise Withdrawal Request</h2>
+              <p style="line-height: 1.7; margin-bottom: 25px; font-size: 16px; color: #555555;">
+                We've received your Wise transfer request and it is currently being processed by our international payments team.
+              </p>
 
-        <p style="color:#1c1c1c; font-size:15px;">
-          Hello <strong>${name.toUpperCase()}</strong>,
-        </p>
+              <div style="background-color: #f8f9fa; border-left: 5px solid #50626a; padding: 25px; margin: 30px 0; border-radius: 0 8px 8px 0;">
+                <h3 style="margin-top: 0; color: #50626a; font-size: 18px; margin-bottom: 20px;">Transfer Details</h3>
 
-        <p style="color:#1c1c1c; font-size:15px;">
-          We've received your Wise withdrawal request and are currently processing your transaction.
-        </p>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Full Name:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${fullName}</div>
+                </div>
 
-        <p style="font-weight:bold; font-size:15px; color:#1c1c1c;">Withdrawal Details:</p>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Amount:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">$${amount} USD</div>
+                </div>
 
-        <table style="width:100%; border-collapse:collapse; font-size:15px; color:#1c1c1c;">
-          <tr><td style="padding:8px; font-weight:bold;">Currency:</td><td style="padding:8px;">USD</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Amount:</td><td style="padding:8px;">$${amount}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Full Name:</td><td style="padding:8px;">$${fullName}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Country:</td><td style="padding:8px;">${country}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Email:</td><td style="padding:8px;">${email}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Transfer Type:</td><td style="padding:8px;">${transferType}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Status:</td><td style="padding:8px; color:orange;">Pending</td></tr>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Email:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${email}</div>
+                </div>
+
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Country:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${country}</div>
+                </div>
+
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Transfer Type:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${transferType}</div>
+                </div>
+
+                <div style="display: inline-block; padding: 8px 16px; background-color: #fff3cd; color: #856404; border-radius: 6px; font-size: 14px; font-weight: 600; margin-top: 15px; border: 1px solid #ffeaa7;">
+                  Status: Under Review
+                </div>
+              </div>
+
+              <div style="margin-top: 35px; padding-top: 25px; border-top: 1px solid #eaeaea;">
+                <h3 style="color: #50626a; margin-bottom: 20px; font-size: 18px; font-weight: 600;">International Transfer Timeline</h3>
+                <ul style="padding-left: 20px; margin: 0;">
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    Security verification and compliance checks (1-2 hours)
+                  </li>
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    Currency conversion and transfer processing
+                  </li>
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    Wise network processing (1-3 business days)
+                  </li>
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    You'll receive Wise transfer confirmation
+                  </li>
+                </ul>
+              </div>
+
+              <div style="background-color: #f0f7ff; padding: 20px; border-radius: 8px; margin-top: 25px; border: 1px solid #e1f0ff;">
+                <h4 style="color: #50626a; margin-bottom: 10px; font-size: 16px;">Exchange Rates & Fees</h4>
+                <p style="margin: 0; color: #555555; line-height: 1.6;">
+                  The final amount received may vary based on Wise's current exchange rates and applicable transfer fees. You'll see the exact amount in your Wise account.
+                </p>
+              </div>
+
+              <div style="background-color: #fff8e6; padding: 15px; border-radius: 6px; margin-top: 20px; font-size: 13px; color: #856404; border: 1px solid #ffeaa7;">
+                <strong>Important:</strong> Please ensure your Wise account details are correct and your account can receive USD transfers. Incorrect information may delay your transfer.
+              </div>
+
+              <div style="background-color: #f0f7ff; padding: 20px; border-radius: 8px; margin-top: 25px; border: 1px solid #e1f0ff;">
+                <h4 style="color: #50626a; margin-bottom: 10px; font-size: 16px;">Need Assistance?</h4>
+                <p style="margin: 0; color: #555555; line-height: 1.6;">
+                  If you have any questions about your Wise transfer, please contact our international support team at
+                  <a href="mailto:support@wealthgrowerfinance.org" style="color: #50626a; text-decoration: none; font-weight: 500;">support@wealthgrowerfinance.org</a>
+                </p>
+              </div>
+
+              <p style="line-height: 1.7; margin-top: 25px; font-size: 16px; color: #555555;">
+                Best regards,<br />
+                <strong>The WealthGrower Finance Bank Team</strong>
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #f5f7f9; padding: 30px; text-align: center; font-size: 14px; color: #666666; border-top: 1px solid #eaeaea;">
+              <p style="margin: 0;">
+                &copy; ${new Date().getFullYear()} WealthGrower Finance Bank. All rights reserved.
+              </p>
+              <div style="margin-top: 20px; line-height: 1.6;">
+                <p style="margin: 0;">
+                  WealthGrower Finance Bank | 123 Financial District, City, Country
+                </p>
+                <p style="margin: 0;">
+                  Email:
+                  <a href="mailto:support@wealthgrowerfinance.org" style="color: #50626a; text-decoration: none; font-weight: 500;">support@wealthgrowerfinance.org</a>
+                  | Phone: +1 (555) 123-4567
+                </p>
+                <p style="margin-top: 15px; font-size: 12px; color: #888;">
+                  This email was sent automatically. Please do not reply to this message.
+                </p>
+              </div>
+            </td>
+          </tr>
         </table>
-
-        <p style="font-size:15px; color:#1c1c1c;">
-          You’ll receive a notification once the transfer has been completed. Processing typically takes 1–3 business days.
-        </p>
-
-        <p style="font-size:15px; color:#1c1c1c;">
-          Thank you for choosing <strong>WealthWise</strong>.
-        </p>
-
-        <p style="font-size:12px; color:#888; margin-top:20px;">
-          If you did not initiate this withdrawal, please contact our support team immediately at 
-          <a href="mailto:support@wealthwise.online" style="color:#2563eb;">support@wealthwise.online</a>.
-        </p>
-
-        <div style="text-align:center; font-size:12px; color:#666; margin-top:30px;">
-          &copy; 2025 WealthWise Bank. All rights reserved.
-        </div>
-
-      </div>
-    </body>
-  </html>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
   `;
 };
 
@@ -1206,60 +1692,143 @@ const cashappWithdrawalTemplate = (
   name
 ) => {
   return `
-  <!DOCTYPE html>
-  <html>
-    <head>
-      <meta charset="UTF-8" />
-      <title>CashApp Withdrawal Confirmation</title>
-    </head>
-    <body style="margin:0; padding:0; background-color:#e5f1fb; font-family:Arial, sans-serif;">
-      <div style="max-width:600px; margin:40px auto; background:#ffffff; border:2px solid #004aad; border-radius:8px; padding:30px;">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cash App Withdrawal Request - WealthGrower Finance</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Arial, Helvetica, sans-serif; background-color: #f8fafc; color: #333333; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+  <table width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f8fafc;">
+    <tr>
+      <td align="center" style="padding: 40px 15px;">
+        <table width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);">
+          <tr>
+            <td style="background-color: #50626a; padding: 30px; text-align: center; border-bottom: 4px solid #3a4a52;">
+              <a href="#" style="display: inline-block; color: #ffffff; font-size: 32px; font-weight: 700; text-decoration: none; letter-spacing: -0.5px;">
+                WealthGrower
+                <span style="display: block; font-size: 16px; font-weight: 400; margin-top: 8px; opacity: 0.9;">Finance Bank</span>
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 40px;">
+              <div style="text-align: center; margin-bottom: 30px;">
+                <div style="font-size: 48px; margin-bottom: 20px;">💳</div>
+                <h2 style="font-size: 28px; margin-bottom: 15px; color: #50626a; font-weight: 700;">Cash App Transfer Request</h2>
+                <p style="font-size: 18px; color: #555555; margin: 0;">Your instant transfer is being processed</p>
+              </div>
 
-        <div style="text-align:center; margin-bottom:30px;">
-          <img src="https://wealthwise-olive.vercel.app/static/media/mobilewealth.8bf93fd7d2dff4d41d7d.png" alt="CoresMarket Logo" style="width:150px;" />
-        </div>
+              <h2 style="font-size: 20px; margin-bottom: 25px; color: #50626a; font-weight: 600;">Dear ${name},</h2>
 
-        <h2 style="color:#1c1c1c; text-align:start;">💸 CashApp Withdrawal Request</h2>
+              <p style="line-height: 1.7; margin-bottom: 25px; font-size: 16px; color: #555555;">
+                We've received your Cash App withdrawal request and it is currently being processed for instant transfer to your account.
+              </p>
 
-        <p style="color:#1c1c1c; font-size:15px;">
-          Hello <strong>${name}</strong>,
-        </p>
+              <div style="background-color: #f8f9fa; border-left: 5px solid #50626a; padding: 25px; margin: 30px 0; border-radius: 0 8px 8px 0;">
+                <h3 style="margin-top: 0; color: #50626a; font-size: 18px; margin-bottom: 20px;">Transfer Details</h3>
 
-        <p style="color:#1c1c1c; font-size:15px;">
-          We’ve received your CashApp withdrawal request and are processing it now.
-        </p>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Full Name:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${fullName}</div>
+                </div>
 
-        <p style="font-weight:bold; font-size:15px; color:#1c1c1c;">Withdrawal Details:</p>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Amount:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">$${amount} USD</div>
+                </div>
 
-        <table style="width:100%; border-collapse:collapse; font-size:15px; color:#1c1c1c;">
-          <tr><td style="padding:8px; font-weight:bold;">Currency:</td><td style="padding:8px;">USD</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Full Name:</td><td style="padding:8px;">${fullName}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Amount:</td><td style="padding:8px;">$${amount} USD</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">CashTag:</td><td style="padding:8px;">${cashTag}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Email:</td><td style="padding:8px;">${email}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Transfer Type:</td><td style="padding:8px;">${transferType}</td></tr>
-          <tr><td style="padding:8px; font-weight:bold;">Status:</td><td style="padding:8px; color:orange;">Pending</td></tr>
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Cash Tag:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${cashTag}</div>
+                </div>
+
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Email:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${email}</div>
+                </div>
+
+                <div style="margin-bottom: 12px; display: flex; align-items: center;">
+                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Transfer Type:</div>
+                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${transferType}</div>
+                </div>
+
+                <div style="display: inline-block; padding: 8px 16px; background-color: #fff3cd; color: #856404; border-radius: 6px; font-size: 14px; font-weight: 600; margin-top: 15px; border: 1px solid #ffeaa7;">
+                  Status: Under Review
+                </div>
+              </div>
+
+              <div style="margin-top: 35px; padding-top: 25px; border-top: 1px solid #eaeaea;">
+                <h3 style="color: #50626a; margin-bottom: 20px; font-size: 18px; font-weight: 600;">Instant Transfer Timeline</h3>
+                <ul style="padding-left: 20px; margin: 0;">
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    Security verification and approval process (1-2 hours)
+                  </li>
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    Cash App instant transfer processing
+                  </li>
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    Funds typically arrive within minutes after approval
+                  </li>
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
+                    You'll receive Cash App notification
+                  </li>
+                </ul>
+              </div>
+
+              <div style="background-color: #f0f7ff; padding: 20px; border-radius: 8px; margin-top: 25px; border: 1px solid #e1f0ff;">
+                <h4 style="color: #50626a; margin-bottom: 10px; font-size: 16px;">Instant Transfer Features</h4>
+                <p style="margin: 0; color: #555555; line-height: 1.6;">
+                  Cash App instant transfers provide immediate access to your funds. Standard transfers are free, while instant transfers may include a small fee from Cash App.
+                </p>
+              </div>
+
+              <div style="background-color: #fff8e6; padding: 15px; border-radius: 6px; margin-top: 20px; font-size: 13px; color: #856404; border: 1px solid #ffeaa7;">
+                <strong>Verification Required:</strong> Please ensure your Cash App account is verified and can receive the specified amount. Unverified accounts may experience delays.
+              </div>
+
+              <div style="background-color: #f0f7ff; padding: 20px; border-radius: 8px; margin-top: 25px; border: 1px solid #e1f0ff;">
+                <h4 style="color: #50626a; margin-bottom: 10px; font-size: 16px;">Need Help?</h4>
+                <p style="margin: 0; color: #555555; line-height: 1.6;">
+                  If you encounter any issues with your Cash App transfer or need to update your Cash Tag, please contact our support team at
+                  <a href="mailto:support@wealthgrowerfinance.org" style="color: #50626a; text-decoration: none; font-weight: 500;">support@wealthgrowerfinance.org</a>
+                </p>
+              </div>
+
+              <p style="line-height: 1.7; margin-top: 25px; font-size: 16px; color: #555555;">
+                Best regards,<br />
+                <strong>The WealthGrower Finance Bank Team</strong>
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #f5f7f9; padding: 30px; text-align: center; font-size: 14px; color: #666666; border-top: 1px solid #eaeaea;">
+              <p style="margin: 0;">
+                &copy; ${new Date().getFullYear()} WealthGrower Finance Bank. All rights reserved.
+              </p>
+              <div style="margin-top: 20px; line-height: 1.6;">
+                <p style="margin: 0;">
+                  WealthGrower Finance Bank | 123 Financial District, City, Country
+                </p>
+                <p style="margin: 0;">
+                  Email:
+                  <a href="mailto:support@wealthgrowerfinance.org" style="color: #50626a; text-decoration: none; font-weight: 500;">support@wealthgrowerfinance.org</a>
+                  | Phone: +1 (555) 123-4567
+                </p>
+                <p style="margin-top: 15px; font-size: 12px; color: #888;">
+                  This email was sent automatically. Please do not reply to this message.
+                </p>
+              </div>
+            </td>
+          </tr>
         </table>
-
-        <p style="font-size:15px; color:#1c1c1c;">
-          You’ll be notified once your funds have been sent. Typical processing time is 1–3 business days.
-        </p>
-
-        <p style="font-size:15px; color:#1c1c1c;">
-          Thank you for choosing <strong>WealthWise</strong>.
-        </p>
-
-        <p style="font-size:12px; color:#888; margin-top:20px;">
-          If you did not request this withdrawal, please contact our support immediately at 
-          <a href="mailto:support@wealthwise.online" style="color:#2563eb;">support@wealthwise.online</a>.
-        </p>
-
-        <div style="text-align:center; font-size:12px; color:#666; margin-top:30px;">
-          &copy; 2025 WealthWise Bank. All rights reserved.
-        </div>
-
-      </div>
-    </body>
-  </html>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
   `;
 };
