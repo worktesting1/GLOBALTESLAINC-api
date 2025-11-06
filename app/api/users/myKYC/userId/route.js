@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import dbConnect from "../../../../../../lib/mongodb";
-import Kyc from "../../../../../../models/Kyc";
-import { withAuth } from "../../../../../../lib/apiHander";
+import dbConnect from "../../../../../lib/mongodb";
+import Kyc from "../../../../../models/Kyc";
+import { withAuth } from "../../../../../lib/apiHander";
 import { corsHeaders, handleOptions } from "../../../../../lib/cors";
 
 export async function OPTIONS(request) {

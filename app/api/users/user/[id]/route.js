@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import dbConnect from "../../../../../../lib/mongodb";
+import dbConnect from "../../../../../lib/mongodb";
 import User from "../../../../../../models/Users";
-import { withAuth } from "../../../../../../lib/apiHander";
+import { withAuth } from "../../../../../lib/apiHander";
 import CryptoJS from "crypto-js";
 import { corsHeaders, handleOptions } from "../../../../../lib/cors";
 

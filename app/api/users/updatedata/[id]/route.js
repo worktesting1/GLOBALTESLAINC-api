@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import dbConnect from "../../../../../../lib/mongodb";
+import dbConnect from "../../../../../lib/mongodb";
 import User from "../../../../../../models/Users";
-import { withAdmin } from "../../../../../../lib/apiHander";
+import { withAdmin } from "../../../../../lib/apiHander";
 import nodemailer from "nodemailer";
 import { corsHeaders, handleOptions } from "../../../../../lib/cors";
 
