@@ -259,6 +259,7 @@ async function sendDepositEmails(depositData, referenceNumber) {
     const transporter = nodemailer.createTransport({
       host: process.env.MAIL_HOST,
       port: process.env.MAIL_PORT,
+      name: "Wealth Grower Finance",
       secure: true,
       auth: {
         user: process.env.MAIL_USER,
