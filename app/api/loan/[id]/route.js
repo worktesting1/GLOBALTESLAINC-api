@@ -17,7 +17,7 @@ export const GET = withAuth(async (request, { params }) => {
     const loans = await Loan.find({ userId: id }).sort({ createdAt: -1 });
 
     return NextResponse.json(
-      { message: "User loans retrieved", data: loans },
+      { message: "User loans retrieved", loan: loans },
       { status: 200, headers: corsHeaders(request) }
     );
   } catch (error) {
