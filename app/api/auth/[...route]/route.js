@@ -378,7 +378,7 @@ async function sendResetEmail(email, token) {
       from: process.env.MAIL_USER,
       to: email,
       subject: "Password Reset Link",
-      text: `Dear ${email} You have initiated a password reset \n Please click on the link to reset your password. \n https://capitalflowfinance.com/reset/${token}`,
+      text: `Dear ${email} You have initiated a password reset \n Please click on the link to reset your password. \n http://localhost:5173/reset/${token}`,
     };
 
     await transport.sendMail(userMailOptions);
