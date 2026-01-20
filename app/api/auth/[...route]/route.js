@@ -43,7 +43,7 @@ export async function POST(request, { params }) {
       default:
         return NextResponse.json(
           { error: "Endpoint not found" },
-          { status: 404, headers }
+          { status: 404, headers },
         );
     }
   } catch (error) {
@@ -56,7 +56,7 @@ export async function POST(request, { params }) {
 
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500, headers }
+      { status: 500, headers },
     );
   }
 }
@@ -65,23 +65,20 @@ export async function POST(request, { params }) {
 async function handleRegister(body, headers) {
   try {
     const newUser = new User({
-      firstName: body.firstName,
-      lastName: body.lastName,
-      userName: body.userName,
+      fullName: body.fullName,
       email: body.email,
       country: body.country,
       phone: body.phone,
-      accountNum: body.accountNum,
       zipCode: body.zipCode,
       address: body.address,
       userOtp: 0,
       password: CryptoJS.AES.encrypt(
         body.password,
-        process.env.PASS_SEC
+        process.env.PASS_SEC,
       ).toString(),
       confirmpassword: CryptoJS.AES.encrypt(
         body.confirmpassword,
-        process.env.PASS_SEC
+        process.env.PASS_SEC,
       ).toString(),
     });
 
@@ -99,13 +96,13 @@ async function handleRegister(body, headers) {
 
     return NextResponse.json(
       { message: "Success", savedUser: savedUser },
-      { status: 201, headers }
+      { status: 201, headers },
     );
   } catch (error) {
     console.error("Registration error:", error);
     return NextResponse.json(
       { error: "Registration failed" },
-      { status: 500, headers }
+      { status: 500, headers },
     );
   }
 }
@@ -120,7 +117,7 @@ async function handleLogin(body, headers) {
 
     const hashedPassword = CryptoJS.AES.decrypt(
       user.password,
-      process.env.PASS_SEC
+      process.env.PASS_SEC,
     );
     const originalPassword = hashedPassword.toString(CryptoJS.enc.Utf8);
 
@@ -134,19 +131,19 @@ async function handleLogin(body, headers) {
         isAdmin: user.isAdmin,
       },
       process.env.JWT_SEC,
-      { expiresIn: "3d" }
+      { expiresIn: "3d" },
     );
 
     const { password, confirmpassword, ...others } = user._doc;
     return NextResponse.json(
       { ...others, accessToken },
-      { status: 200, headers }
+      { status: 200, headers },
     );
   } catch (error) {
     console.error("Login error:", error);
     return NextResponse.json(
       { error: "Login failed" },
-      { status: 500, headers }
+      { status: 500, headers },
     );
   }
 }
@@ -157,7 +154,7 @@ async function handleAdminRegister(body, headers) {
     if (body.secretKey !== `adminRegKey1!`) {
       return NextResponse.json(
         { msg: `Wrong Admin Key` },
-        { status: 401, headers }
+        { status: 401, headers },
       );
     }
 
@@ -165,11 +162,11 @@ async function handleAdminRegister(body, headers) {
       email: body.email,
       password: CryptoJS.AES.encrypt(
         body.password,
-        process.env.PASS_SEC
+        process.env.PASS_SEC,
       ).toString(),
       confirmpassword: CryptoJS.AES.encrypt(
         body.confirmpassword,
-        process.env.PASS_SEC
+        process.env.PASS_SEC,
       ).toString(),
     });
 
@@ -179,7 +176,7 @@ async function handleAdminRegister(body, headers) {
     console.error("Admin registration error:", error);
     return NextResponse.json(
       { error: "Admin registration failed" },
-      { status: 500, headers }
+      { status: 500, headers },
     );
   }
 }
@@ -194,7 +191,7 @@ async function handleAdminLogin(body, headers) {
 
     const hashedPassword = CryptoJS.AES.decrypt(
       admin.password,
-      process.env.PASS_SEC
+      process.env.PASS_SEC,
     );
     const originalPassword = hashedPassword.toString(CryptoJS.enc.Utf8);
 
@@ -208,19 +205,19 @@ async function handleAdminLogin(body, headers) {
         isAdmin: admin.isAdmin,
       },
       process.env.JWT_SEC,
-      { expiresIn: "3d" }
+      { expiresIn: "3d" },
     );
 
     const { password, cpassword, ...others } = admin._doc;
     return NextResponse.json(
       { ...others, accessToken },
-      { status: 200, headers }
+      { status: 200, headers },
     );
   } catch (error) {
     console.error("Admin login error:", error);
     return NextResponse.json(
       { error: "Admin login failed" },
-      { status: 500, headers }
+      { status: 500, headers },
     );
   }
 }
@@ -243,7 +240,7 @@ async function handleForgetPassword(body, headers) {
           resetToken: token,
           resetTokenExpiry: expiryDate,
         },
-      }
+      },
     );
 
     // Send reset email
@@ -254,7 +251,7 @@ async function handleForgetPassword(body, headers) {
     console.error("Forgot password error:", error);
     return NextResponse.json(
       { error: "Password reset request failed" },
-      { status: 500, headers }
+      { status: 500, headers },
     );
   }
 }
@@ -285,11 +282,11 @@ async function handleResetPassword(body, headers) {
 
     const hashedPassword = CryptoJS.AES.encrypt(
       password,
-      process.env.PASS_SEC
+      process.env.PASS_SEC,
     ).toString();
     const cpassword = CryptoJS.AES.encrypt(
       confirmpassword,
-      process.env.PASS_SEC
+      process.env.PASS_SEC,
     ).toString();
 
     user.password = hashedPassword;
@@ -307,7 +304,7 @@ async function handleResetPassword(body, headers) {
     console.error("Reset password error:", error);
     return NextResponse.json(
       { error: "Password reset failed" },
-      { status: 500, headers }
+      { status: 500, headers },
     );
   }
 }
@@ -328,7 +325,7 @@ async function sendWelcomeEmail(user, email) {
     const userMailOptions = {
       from: process.env.MAIL_USER,
       to: email,
-      subject: "Welcome to Wealth Grower Finance Bank – Your Account is Ready",
+      subject: "Welcome to GlobalTeslaInc Finance – Your Account is Ready",
       html: signupEmailTemplate(user),
     };
 
@@ -398,21 +395,21 @@ function signupEmailTemplate(user) {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Welcome to WealthGrower Finance Bank</title>
+  <title>Welcome to Tesla Finance</title>
 </head>
-<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Arial, Helvetica, sans-serif; background-color: #f8fafc; color: #333333; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
-  <table width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f8fafc;">
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Arial, Helvetica, sans-serif; background-color: #000000; color: #ffffff; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+  <table width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #000000;">
     <tr>
       <td align="center" style="padding: 40px 15px;">
         <!-- Email Container -->
-        <table width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);">
+        <table width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 600px; background-color: #000000; border-radius: 8px; overflow: hidden; border: 1px solid #333333;">
           <!-- Header -->
           <tr>
-            <td style="background-color: #50626a; padding: 30px; text-align: center; border-bottom: 4px solid #3a4a52;">
-              <a href="#" style="display: inline-block; color: #ffffff; font-size: 32px; font-weight: 700; text-decoration: none; letter-spacing: -0.5px;">
-                WealthGrower
-                <span style="display: block; font-size: 16px; font-weight: 400; margin-top: 8px; opacity: 0.9;">Finance Bank</span>
-              </a>
+            <td style="background-color: #000000; padding: 30px; text-align: center; border-bottom: 1px solid #333333;">
+              <div style="color: #ffffff; font-size: 36px; font-weight: 700; text-decoration: none; letter-spacing: -1px;">
+                GlobalTeslaInc
+                <span style="display: block; font-size: 16px; font-weight: 400; margin-top: 8px; color: #cccccc;">FINANCE & INVESTMENTS</span>
+              </div>
             </td>
           </tr>
 
@@ -420,128 +417,111 @@ function signupEmailTemplate(user) {
           <tr>
             <td style="padding: 40px;">
               <div style="text-align: center; margin-bottom: 30px;">
-                <div style="font-size: 48px; margin-bottom: 20px;">🎉</div>
-                <h2 style="font-size: 28px; margin-bottom: 15px; color: #50626a; font-weight: 700;">Welcome to WealthGrower Finance Bank!</h2>
-                <p style="font-size: 18px; color: #555555; margin: 0;">Your account has been successfully created</p>
+                <div style="font-size: 48px; margin-bottom: 20px;">⚡</div>
+                <h2 style="font-size: 28px; margin-bottom: 15px; color: #ffffff; font-weight: 700; letter-spacing: -0.5px;">Welcome to GlobalTeslaInc Finance</h2>
+                <p style="font-size: 18px; color: #cccccc; margin: 0;">Your investment account is now active</p>
               </div>
 
-              <h2 style="font-size: 20px; margin-bottom: 25px; color: #50626a; font-weight: 600;">Dear ${
-                user.firstName
-              } ${user.lastName},</h2>
+              <h2 style="font-size: 20px; margin-bottom: 25px; color: #ffffff; font-weight: 600;">Dear ${user.fullName},</h2>
 
-              <p style="line-height: 1.7; margin-bottom: 25px; font-size: 16px; color: #555555;">
-                Welcome to <strong>WealthGrower Finance Bank</strong> — your gateway to secure, modern, and convenient online banking.
-                Your account has been successfully created, and you're now ready to take full control of your financial journey.
+              <p style="line-height: 1.7; margin-bottom: 25px; font-size: 16px; color: #cccccc;">
+                Welcome to <strong>GlobalTeslaInc Finance</strong> — your platform for stocks, investments, cryptocurrency, and vehicle financing. 
+                Your account has been successfully created and you're now ready to accelerate your financial future.
               </p>
 
-              <div style="background-color: #f8f9fa; border-left: 5px solid #50626a; padding: 25px; margin: 30px 0; border-radius: 0 8px 8px 0;">
-                <h3 style="margin-top: 0; color: #50626a; font-size: 18px; margin-bottom: 20px;">Your Account Details</h3>
+              <div style="background-color: #111111; padding: 25px; margin: 30px 0; border-radius: 8px; border: 1px solid #333333;">
+                <h3 style="margin-top: 0; color: #ffffff; font-size: 18px; margin-bottom: 20px; font-weight: 600;">Your Account Profile</h3>
 
                 <div style="margin-bottom: 12px; display: flex; align-items: center;">
-                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Username:</div>
-                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${
-                    user.userName
-                  }</div>
+                  <div style="font-weight: 600; width: 140px; color: #ffffff; font-size: 15px;">Full Name:</div>
+                  <div style="font-weight: 500; color: #cccccc; font-size: 15px;">${user.fullName}</div>
                 </div>
 
                 <div style="margin-bottom: 12px; display: flex; align-items: center;">
-                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Email:</div>
-                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${
-                    user.email
-                  }</div>
+                  <div style="font-weight: 600; width: 140px; color: #ffffff; font-size: 15px;">Email:</div>
+                  <div style="font-weight: 500; color: #cccccc; font-size: 15px;">${user.email}</div>
                 </div>
 
                 <div style="margin-bottom: 12px; display: flex; align-items: center;">
-                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Country:</div>
-                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${
-                    user.country
-                  }</div>
+                  <div style="font-weight: 600; width: 140px; color: #ffffff; font-size: 15px;">Country:</div>
+                  <div style="font-weight: 500; color: #cccccc; font-size: 15px;">${user.country}</div>
                 </div>
 
                 <div style="margin-bottom: 12px; display: flex; align-items: center;">
-                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Phone:</div>
-                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${
-                    user.phone
-                  }</div>
+                  <div style="font-weight: 600; width: 140px; color: #ffffff; font-size: 15px;">Phone:</div>
+                  <div style="font-weight: 500; color: #cccccc; font-size: 15px;">${user.phone}</div>
                 </div>
 
-                <div style="margin-bottom: 12px; display: flex; align-items: center;">
-                  <div style="font-weight: 600; width: 140px; color: #50626a; font-size: 15px;">Account Number:</div>
-                  <div style="font-weight: 500; color: #333333; font-size: 15px;">${
-                    user.accountNum
-                  }</div>
-                </div>
-
-                <div style="display: inline-block; padding: 8px 16px; background-color: #d4edda; color: #155724; border-radius: 6px; font-size: 14px; font-weight: 600; margin-top: 15px; border: 1px solid #c3e6cb;">
-                  Status: Active Account ✅
+                <div style="display: inline-block; padding: 8px 16px; background-color: #000000; color: #00cc00; border-radius: 6px; font-size: 14px; font-weight: 600; margin-top: 15px; border: 1px solid #333333;">
+                  Status: Account Active ⚡
                 </div>
               </div>
 
-              <div style="margin-top: 35px; padding-top: 25px; border-top: 1px solid #eaeaea;">
-                <h3 style="color: #50626a; margin-bottom: 20px; font-size: 18px; font-weight: 600;">What You Can Do With Your Account</h3>
+              <div style="margin-top: 35px; padding-top: 25px; border-top: 1px solid #333333;">
+                <h3 style="color: #ffffff; margin-bottom: 20px; font-size: 18px; font-weight: 600;">Start Your Investment Journey</h3>
                 <ul style="padding-left: 20px; margin: 0;">
-                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
-                    💼 View and manage your wallet, balances, and transactions in real-time
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #cccccc;">
+                    📈 <strong>Stock Trading</strong> - Trade Tesla and other tech stocks with zero commission
                   </li>
-                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
-                    🔁 Deposit, transfer, and withdraw funds securely
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #cccccc;">
+                    💰 <strong>Crypto Portfolio</strong> - Buy, sell, and manage Bitcoin, Ethereum, and Dogecoin
                   </li>
-                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
-                    💳 Request a WealthGrower debit card for global access
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #cccccc;">
+                    🚗 <strong>Vehicle Financing</strong> - Finance your Tesla with competitive rates
                   </li>
-                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
-                    📈 Apply for loans for your business and personal needs
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #cccccc;">
+                    📊 <strong>Investment Funds</strong> - Access curated portfolios for sustainable energy
                   </li>
-                  <li style="margin-bottom: 12px; line-height: 1.6; color: #555555;">
-                    📨 Receive instant alerts on all account activity
+                  <li style="margin-bottom: 12px; line-height: 1.6; color: #cccccc;">
+                    🔄 <strong>Auto-Invest</strong> - Set up recurring investments in your favorite assets
                   </li>
                 </ul>
               </div>
 
-              <div style="background-color: #f0f7ff; padding: 20px; border-radius: 8px; margin-top: 25px; border: 1px solid #e1f0ff;">
-                <h4 style="color: #50626a; margin-bottom: 10px; font-size: 16px;">Get Started</h4>
-                <p style="margin: 0; color: #555555; line-height: 1.6;">
-                  Access your account dashboard to explore all features and manage your finances.
+              <div style="background-color: #111111; padding: 25px; border-radius: 8px; margin-top: 25px; border: 1px solid #333333;">
+                <h4 style="color: #ffffff; margin-bottom: 10px; font-size: 16px; font-weight: 600;">Ready to Accelerate?</h4>
+                <p style="margin: 0 0 20px 0; color: #cccccc; line-height: 1.6;">
+                  Fund your account and start trading within minutes. Get $10 in GlobalTeslaInc stock when you deposit $100 or more.
                 </p>
-                <div style="text-align: center; margin-top: 20px;">
-                  <a href="https://wealthgrowerfinance.org/login" style="display: inline-block; background-color: #50626a; color: white; padding: 14px 30px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 16px;">
-                    Go to Your Dashboard
+                <div style="text-align: center;">
+                  <a href="https://globalteslainc.online/dashboard" style="display: inline-block; background-color: #ffffff; color: #000000; padding: 14px 30px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 16px; letter-spacing: -0.3px;">
+                    Go to Dashboard
                   </a>
                 </div>
               </div>
 
-              <div style="background-color: #fff8e6; padding: 15px; border-radius: 6px; margin-top: 20px; font-size: 13px; color: #856404; border: 1px solid #ffeaa7;">
-                <strong>Security Notice:</strong> For your protection, please do not share your login details with anyone. 
-                WealthGrower Finance Bank will never ask for your password or sensitive information via email or phone.
+              <div style="background-color: #000000; padding: 15px; border-radius: 6px; margin-top: 20px; font-size: 13px; color: #cccccc; border: 1px solid #333333;">
+                <strong style="color: #ffffff;">Security First:</strong> GlobalTeslaInc Finance uses bank-level encryption and multi-factor authentication. 
+                We will never ask for your password via email. Enable 2FA for enhanced security.
               </div>
 
-              <p style="line-height: 1.7; margin-top: 25px; font-size: 16px; color: #555555;">
-                Thank you for choosing <strong>WealthGrower Finance Bank</strong>. We're honored to serve you and help you grow your financial future.<br />
-                <strong>The WealthGrower Finance Bank Team</strong>
+              <p style="line-height: 1.7; margin-top: 25px; font-size: 16px; color: #cccccc;">
+                Welcome to the future of finance.<br />
+                <strong style="color: #ffffff;">The GlobalTeslaInc Finance Team</strong>
               </p>
             </td>
           </tr>
 
           <!-- Footer -->
           <tr>
-            <td style="background-color: #f5f7f9; padding: 30px; text-align: center; font-size: 14px; color: #666666; border-top: 1px solid #eaeaea;">
+            <td style="background-color: #000000; padding: 30px; text-align: center; font-size: 14px; color: #999999; border-top: 1px solid #333333;">
               <p style="margin: 0;">
-                &copy; ${new Date().getFullYear()} WealthGrower Finance Bank. All rights reserved.
+                &copy; ${new Date().getFullYear()} GlobalTeslaInc Finance. All rights reserved.
               </p>
               <div style="margin-top: 20px; line-height: 1.6;">
-                <p style="margin: 0;">
-                  WealthGrower Finance Bank | 123 Financial District, City, Country
+                <p style="margin: 0; color: #999999;">
+                  GlobalTeslaInc Finance | 1 Tesla Road, Austin, TX 78725
                 </p>
-                <p style="margin: 0;">
-                  Email:
-                  <a href="mailto:support@wealthgrowerfinance.org" style="color: #50626a; text-decoration: none; font-weight: 500;">support@wealthgrowerfinance.org</a>
-                  | Phone: +1 (555) 123-4567
+                <p style="margin: 0; color: #999999;">
+                  Email: <a href="mailto:support@globalteslainc.online" style="color: #ffffff; text-decoration: none; font-weight: 500;">support@globalteslainc.online</a>
+                  | Phone: +1 (512) 387-0500
                 </p>
-                <p style="margin-top: 15px; font-size: 12px; color: #888;">
-                  This email was sent to ${
-                    user.email
-                  }. Please do not reply to this message.
+                <p style="margin-top: 15px; font-size: 12px; color: #666666;">
+                  This email was sent to ${user.email}. GlobalTeslaInc Finance is a division of Tesla, Inc.
                 </p>
+                <div style="margin-top: 20px; font-size: 12px; color: #666666;">
+                  <p style="margin: 0;">Investing involves risk. Past performance is no guarantee of future results.</p>
+                </div>
               </div>
             </td>
           </tr>

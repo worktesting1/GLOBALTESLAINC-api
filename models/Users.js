@@ -2,10 +2,7 @@ import mongoose from "mongoose";
 
 const userSchema = new mongoose.Schema(
   {
-    firstName: { type: String, required: true },
-    lastName: { type: String, required: true },
-    userName: { type: String, required: true },
-    isAdmin: { type: Boolean, default: false },
+    fullName: { type: String, required: true },
     country: {
       type: String,
       required: true,
@@ -14,6 +11,7 @@ const userSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
     confirmpassword: { type: String, required: true },
+    isAdmin: { type: Boolean, default: false },
     status: { type: String, default: false },
     resetToken: { type: String, default: null },
     resetTokenExpiry: { type: Date, default: null },
@@ -29,7 +27,6 @@ const userSchema = new mongoose.Schema(
     transferStep: { type: Number, default: 1 },
     userOtp: { type: Number },
     otpMessage: { type: String, default: "" },
-    accountNum: { type: Number, required: true },
     cardIssuing: { type: Boolean, default: false },
     cardAmount: { type: String, default: "1000" },
     profileImage: { type: Array, default: [] },
@@ -54,7 +51,7 @@ const userSchema = new mongoose.Schema(
     },
     forthMessage: { type: String, default: "Fourth Message" },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 // Prevent model overwrite in development
