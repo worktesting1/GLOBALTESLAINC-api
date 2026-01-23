@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server";
-import dbConnect from "../../../lib/mongodb";
 import Loan from "../../../models/Loan";
-import { corsHeaders, handleOptions } from "../../../lib/cors";
 import nodemailer from "nodemailer";
+import dbConnect from "../../../lib/mongodb";
+import { NextResponse } from "next/server";
+import { corsHeaders, handleOptions } from "../../../lib/cors";
 import { withAdmin } from "../../../lib/apiHander";
 
 export async function OPTIONS(request) {
@@ -46,13 +46,13 @@ export const GET = withAdmin(async (request) => {
           limit,
         },
       },
-      { status: 200, headers: corsHeaders(request) }
+      { status: 200, headers: corsHeaders(request) },
     );
   } catch (error) {
     console.error("Get loans error:", error);
     return NextResponse.json(
       { error: "Failed to fetch loans" },
-      { status: 500, headers: corsHeaders(request) }
+      { status: 500, headers: corsHeaders(request) },
     );
   }
 });
@@ -78,13 +78,13 @@ export async function POST(request) {
 
     return NextResponse.json(
       { message: "Loan created successfully", loan: savedLoan },
-      { status: 201, headers: corsHeaders(request) }
+      { status: 201, headers: corsHeaders(request) },
     );
   } catch (error) {
     console.error("Create loan error:", error);
     return NextResponse.json(
       { error: "Failed to create loan" },
-      { status: 500, headers: corsHeaders(request) }
+      { status: 500, headers: corsHeaders(request) },
     );
   }
 }
@@ -94,7 +94,7 @@ function generateReferenceNumber() {
   let referenceNumber = "WG";
   for (let i = 0; i < 10; i++) {
     referenceNumber += characters.charAt(
-      Math.floor(Math.random() * characters.length)
+      Math.floor(Math.random() * characters.length),
     );
   }
   return referenceNumber;
@@ -333,8 +333,8 @@ function adminNotificationTemplate(loan) {
                   <h3>Application Details:</h3>
                   <p><strong>Reference:</strong> ${loan.referenceNumber}</p>
                   <p><strong>Customer:</strong> ${loan.firstName} ${
-    loan.lastName
-  }</p>
+                    loan.lastName
+                  }</p>
                   <p><strong>Email:</strong> ${loan.email}</p>
                   <p><strong>Loan Type:</strong> ${
                     loan.loanType || "Personal Loan"
