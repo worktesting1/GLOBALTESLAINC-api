@@ -37,6 +37,8 @@ export const GET = withAuth(async (request) => {
             totalInvested > 0 ? (gainLoss / totalInvested) * 100 : 0;
 
           return {
+            id: holding._id,
+            _id: holding._id,
             symbol: holding.symbol,
             name: holding.name || `${holding.symbol} Inc.`,
             shares: holding.quantity,
@@ -51,8 +53,8 @@ export const GET = withAuth(async (request) => {
             logo:
               holding.logo ||
               `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/${holding.symbol}.png`,
-            buyLink: `/trading/${holding.symbol}/buy`,
-            sellLink: `/trading/${holding.symbol}/sell`,
+            buyLink: `/trading/buy/${holding.symbol}`,
+            sellLink: `/trading/sell/${holding.symbol}`,
           };
         } catch (error) {
           console.error(`Error fetching data for ${holding.symbol}:`, error);
@@ -63,6 +65,8 @@ export const GET = withAuth(async (request) => {
             holding.quantity * holding.avgPurchasePrice;
 
           return {
+            id: holding._id,
+            _id: holding._id,
             symbol: holding.symbol,
             name: holding.name || `${holding.symbol} Inc.`,
             shares: holding.quantity,
