@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import dbConnect from "../../../../lib/mongodb";
 import Holding from "../../../../models/Holding";
 import Transaction from "../../../../models/Transaction";
-import Wallet from "../../../../models/Wallet"; // Import Wallet model
+import Wallet from "../../../../models/Wallet";
 import { withAuth } from "../../../../lib/apiHandler";
 import { corsHeaders, handleOptions } from "../../../../lib/cors";
 import mongoose from "mongoose";
@@ -16,7 +16,7 @@ export const POST = withAuth(async (request) => {
     await dbConnect();
 
     const body = await request.json();
-    const { symbol, quantity, price, assetName, fees = 0 } = body;
+    const { symbol, quantity, price, assetName, fees = 0 } = body; // Remove holdingId
 
     const userId = request.userId;
 
@@ -42,7 +42,7 @@ export const POST = withAuth(async (request) => {
     session.startTransaction();
 
     try {
-      // 1. Find the holding
+      // Find the holding by userId and symbol (NOT by holdingId)
       const holding = await Holding.findOne({
         userId,
         symbol: uppercaseSymbol,
@@ -52,18 +52,18 @@ export const POST = withAuth(async (request) => {
         throw new Error(`You don't own any ${uppercaseSymbol} shares`);
       }
 
-      // 2. Check if user has enough shares
+      // Check if user has enough shares
       if (holding.quantity < quantity) {
         throw new Error(
           `Insufficient shares. You only have ${holding.quantity} shares of ${uppercaseSymbol}`,
         );
       }
 
-      // 3. Calculate amounts
+      // Calculate amounts
       const totalAmount = quantity * price;
       const netAmount = totalAmount - fees; // Seller receives amount minus fees
 
-      // 4. Update holding
+      // Update holding
       holding.quantity -= quantity;
 
       // If all shares sold, delete the holding
@@ -77,7 +77,7 @@ export const POST = withAuth(async (request) => {
         await holding.save({ session });
       }
 
-      // 5. Create sell transaction
+      // Create sell transaction
       const transaction = new Transaction({
         userId,
         type: "SELL",
@@ -94,32 +94,31 @@ export const POST = withAuth(async (request) => {
 
       await transaction.save({ session });
 
-      // 6. ADD TO USER'S WALLET
+      // Add to user's wallet balance
       let wallet = await Wallet.findOne({ userId }).session(session);
 
       if (!wallet) {
-        // Create wallet if it doesn't exist
         wallet = new Wallet({
           userId,
-          balanceUSD: netAmount, // Initial balance is the sale proceeds
+          balanceUSD: netAmount,
         });
         await wallet.save({ session });
       } else {
-        // Add sale proceeds to existing wallet balance
         wallet.balanceUSD += netAmount;
         await wallet.save({ session });
       }
 
-      // 7. Commit transaction
+      // Commit transaction
       await session.commitTransaction();
       session.endSession();
 
-      // Return success response with wallet info
+      // Return success response
       return NextResponse.json(
         {
           success: true,
           message: `Successfully sold ${quantity} shares of ${uppercaseSymbol}`,
           transactionId: transaction.transactionId,
+          holdingId: holding._id, // Send back the holdingId if needed
           data: {
             symbol: uppercaseSymbol,
             name: assetName || holding.name,
