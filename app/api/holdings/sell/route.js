@@ -3,7 +3,7 @@ import dbConnect from "../../../../lib/mongodb";
 import Holding from "../../../../models/Holding";
 import Transaction from "../../../../models/Transaction";
 import Wallet from "../../../../models/Wallet";
-import { withAuth } from "../../../../lib/apiHandler";
+import { withAuth } from "../../../../lib/apiHander";
 import { corsHeaders, handleOptions } from "../../../../lib/cors";
 import mongoose from "mongoose";
 
