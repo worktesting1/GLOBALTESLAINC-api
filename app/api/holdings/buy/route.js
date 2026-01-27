@@ -283,7 +283,7 @@ async function sendPurchaseConfirmationEmail(userEmail, purchaseData) {
   `;
 
   const mailOptions = {
-    from: `"GlobalTeslaInc" <${process.env.EMAIL_FROM || process.env.EMAIL_USER}>`,
+    from: `"GlobalTeslaInc" <${process.env.ADMIN_MAIL}>`,
     to: userEmail,
     subject: `Purchase Confirmation: ${purchaseData.quantity} shares of ${purchaseData.symbol}`,
     html: emailHtml,
