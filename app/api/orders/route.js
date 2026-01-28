@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import dbConnect from "@/lib/dbConnect";
-import { OrderService } from "@/services/orderService";
+import dbConnect from "@/lib/mongodb";
+import { OrderService } from "@/middleware/orderServices";
 import { corsHeaders, handleOptions } from "@/lib/cors";
-import { withAuth } from "@/middleware/authMiddleware";
+import { withAuth } from "@/lib/apiHander";
 
 export async function OPTIONS(request) {
   return handleOptions(request);

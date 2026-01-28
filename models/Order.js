@@ -107,5 +107,16 @@ const orderSchema = new mongoose.Schema(
   },
 );
 
+if (mongoose.connection.readyState === 1) {
+  mongoose.connection.collection("orders").then((collection) => {
+    collection.getIndexes().then((indexes) => {
+      if (indexes.expiresAt_1?.expireAfterSeconds !== undefined) {
+        collection.dropIndex("expiresAt_1");
+        console.log("Removed TTL index from orders collection");
+      }
+    });
+  });
+}
+
 const Order = mongoose.models.Order || mongoose.model("Order", orderSchema);
 export default Order;
