@@ -107,7 +107,7 @@ async function handleRegister(body, headers) {
   }
 }
 
-// User Login Handler
+// In your login handler - ENHANCED
 async function handleLogin(body, headers) {
   try {
     const user = await User.findOne({ email: body.email });
@@ -135,8 +135,14 @@ async function handleLogin(body, headers) {
     );
 
     const { password, confirmpassword, ...others } = user._doc;
+
+    // IMPORTANT: Return user ID for frontend to store
     return NextResponse.json(
-      { ...others, accessToken },
+      {
+        ...others,
+        accessToken,
+        userId: user._id.toString(), // Explicitly send user ID
+      },
       { status: 200, headers },
     );
   } catch (error) {

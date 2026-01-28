@@ -1,4 +1,4 @@
-// app/api/checkout/[id]/route.js - FINAL FIXED VERSION
+// app/api/checkout/[id]/route.js - UPDATED VERSION WITH AUTH SUPPORT
 import { NextResponse } from "next/server";
 import dbConnect from "@/lib/mongodb";
 import Order from "@/models/Order";
@@ -7,12 +7,13 @@ import PaymentMethod from "@/models/PaymentMethod";
 import { validateCheckout } from "@/middleware/validateorder";
 import { corsHeaders, handleOptions } from "@/lib/cors";
 import crypto from "crypto";
+import jwt from "jsonwebtoken";
 
 export async function OPTIONS(request) {
   return handleOptions(request);
 }
 
-// POST /api/checkout/[id] - SIMPLE NO-AUTH CHECKOUT
+// POST /api/checkout/[id] - WITH AUTH SUPPORT
 export const POST = async (request, { params }) => {
   try {
     await dbConnect();
@@ -43,7 +44,7 @@ export const POST = async (request, { params }) => {
       );
     }
 
-    // Get payment method - FIXED VERSION
+    // Get payment method
     const paymentMethodId = checkoutData.payment_method_id;
 
     if (!paymentMethodId) {
@@ -101,34 +102,70 @@ export const POST = async (request, { params }) => {
       );
     }
 
+    // 1. Check if user is logged in
+    const token = request.headers.get("token");
+    let userId;
+    let isGuest = true;
+    let guestSessionId = null;
+
+    if (token) {
+      try {
+        // Verify token and get user ID
+        const decoded = jwt.verify(token, process.env.JWT_SEC);
+        userId = decoded.id;
+        isGuest = false; // User is logged in
+
+        console.log(`✅ User logged in: ${userId}`);
+      } catch (error) {
+        console.log("⚠️ Invalid token, proceeding as guest:", error.message);
+        // Token is invalid, proceed as guest
+      }
+    }
+
+    // 2. Determine user ID for order
+    if (!userId) {
+      // User is guest - use provided guestId or generate new one
+      if (body.guestId && body.guestId.startsWith("guest_")) {
+        userId = body.guestId;
+        guestSessionId = body.guestId;
+        console.log(`👤 Using provided guest ID: ${userId}`);
+      } else {
+        // Generate new guest ID
+        userId = `guest_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
+        guestSessionId = userId;
+        console.log(`👤 Generated new guest ID: ${userId}`);
+      }
+    }
+
     // Create order
     const orderId = `ORD-${Date.now()}-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
     const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
 
-    // Crypto conversion rates (simplified - use real API in production)
+    // Crypto conversion rates
     const cryptoRates = {
-      BTC: 90000, // Current BTC price
-      DOGE: 0.13, // Current DOGE price
-      LTC: 70, // Current LTC price
-      USDT: 1, // 1:1 with USD
-      USDC: 1, // 1:1 with USD
+      BTC: 90000,
+      DOGE: 0.13,
+      LTC: 70,
+      USDT: 1,
+      USDC: 1,
     };
 
     const cryptoAmount = car.price / (cryptoRates[paymentMethod.code] || 1);
-    const guestUserId = `guest_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
 
     const order = new Order({
       orderId,
       carId: car._id,
       status: "pending",
       paymentMethod: paymentMethod.name,
-      paymentMethodCode: paymentMethod.code, // Store code separately
+      paymentMethodCode: paymentMethod.code,
       paymentCurrency: paymentMethod.code,
       amount: car.price,
-      cryptoAmount: parseFloat(cryptoAmount.toFixed(8)), // 8 decimal places for crypto
+      cryptoAmount: parseFloat(cryptoAmount.toFixed(8)),
       walletAddress: paymentMethod.walletAddress,
       expiresAt,
-      userId: guestUserId,
+      userId: userId, // Use determined userId
+      isGuestOrder: isGuest, // True if guest, false if logged in
+      guestSessionId: guestSessionId, // Store original guest ID if guest
       billingInfo: {
         name: checkoutData.billing_name,
         email: checkoutData.billing_email,
@@ -152,24 +189,33 @@ export const POST = async (request, { params }) => {
     });
 
     await order.save();
-
-    return NextResponse.json(
-      {
-        success: true,
-        message: "Order created successfully",
-        data: {
-          orderId: order.orderId,
-          status: order.status,
-          expiresAt: order.expiresAt,
-          amount: order.amount,
-          paymentMethod: order.paymentMethod,
-          cryptoAmount: order.cryptoAmount,
-          currency: order.paymentCurrency,
-          redirectUrl: `/checkout/${order.orderId}/payment`,
-        },
-      },
-      { status: 201, headers: corsHeaders(request) },
+    console.log(
+      `✅ Order created: ${orderId} for user: ${userId} (${isGuest ? "guest" : "logged-in"})`,
     );
+
+    // Prepare response data
+    const responseData = {
+      success: true,
+      message: "Order created successfully",
+      data: {
+        orderId: order.orderId,
+        status: order.status,
+        expiresAt: order.expiresAt,
+        amount: order.amount,
+        paymentMethod: order.paymentMethod,
+        cryptoAmount: order.cryptoAmount,
+        currency: order.paymentCurrency,
+        redirectUrl: `/checkout/${order.orderId}/payment`,
+        isGuest: isGuest,
+        // Return guestId to frontend if it's a guest order
+        ...(isGuest && { guestId: userId }),
+      },
+    };
+
+    return NextResponse.json(responseData, {
+      status: 201,
+      headers: corsHeaders(request),
+    });
   } catch (error) {
     console.error("Checkout error:", error);
     return NextResponse.json(

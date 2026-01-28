@@ -98,7 +98,7 @@ const carSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
-    features: [String],
+    features: [],
     specifications: {
       type: Map,
       of: String,

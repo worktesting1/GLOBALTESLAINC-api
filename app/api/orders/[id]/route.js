@@ -52,10 +52,10 @@ export const GET = async (request, { params }) => {
 };
 
 // DELETE /api/orders/[id] - Cancel order (STILL NEEDS AUTH)
-export const DELETE = async (request, { params }) => {
-  // Keep DELETE protected or remove it entirely if not needed
-  return NextResponse.json(
-    { success: false, error: "Authentication required to cancel orders" },
-    { status: 401, headers: corsHeaders(request) },
-  );
-};
+// export const DELETE = async (request, { params }) => {
+//   // Keep DELETE protected or remove it entirely if not needed
+//   return NextResponse.json(
+//     { success: false, error: "Authentication required to cancel orders" },
+//     { status: 401, headers: corsHeaders(request) },
+//   );
+// };

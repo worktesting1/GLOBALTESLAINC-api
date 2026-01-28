@@ -11,6 +11,17 @@ const orderSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    isGuestOrder: {
+      type: Boolean,
+      default: true, // Default to true for guest orders
+    },
+    guestSessionId: {
+      type: String,
+      index: true, // Add index for faster lookups
+    },
+    connectedAt: {
+      type: Date, // When guest order was connected to real user
+    },
     carId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Car",
@@ -106,17 +117,6 @@ const orderSchema = new mongoose.Schema(
     timestamps: true,
   },
 );
-
-if (mongoose.connection.readyState === 1) {
-  mongoose.connection.collection("orders").then((collection) => {
-    collection.getIndexes().then((indexes) => {
-      if (indexes.expiresAt_1?.expireAfterSeconds !== undefined) {
-        collection.dropIndex("expiresAt_1");
-        console.log("Removed TTL index from orders collection");
-      }
-    });
-  });
-}
 
 const Order = mongoose.models.Order || mongoose.model("Order", orderSchema);
 export default Order;
