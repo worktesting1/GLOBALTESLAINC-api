@@ -113,6 +113,7 @@ export const GET = withAuth(async (request) => {
           totalInvested: totalInvested.toFixed(2),
           currentPortfolioValue: currentPortfolioValue.toFixed(2),
         },
+
         holdings: holdings.map((h) => ({
           symbol: h.symbol,
           name: h.name,
@@ -120,6 +121,7 @@ export const GET = withAuth(async (request) => {
           avgPurchasePrice: h.avgPurchasePrice,
           totalInvested: h.totalInvested,
           currentValue: h.totalInvested, // Placeholder - should be quantity * currentPrice
+          logo: `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/${h.symbol}.png`,
         })),
         summary: {
           totalTransactions: formattedTransactions.length,
@@ -244,6 +246,7 @@ function getSampleData() {
         avgPurchasePrice: 450.0,
         totalInvested: 2250.0,
         currentValue: 2500.0,
+        logo: `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/NVDA.png`,
       },
       {
         symbol: "TSLA",
@@ -252,6 +255,7 @@ function getSampleData() {
         avgPurchasePrice: 200.0,
         totalInvested: 2000.0,
         currentValue: 2200.0,
+        logo: `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/TSLA.png`,
       },
     ],
     summary: {
