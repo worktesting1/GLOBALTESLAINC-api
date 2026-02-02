@@ -9,9 +9,9 @@ const kycSchema = new mongoose.Schema(
     back: { type: Array, required: true, unique: true },
     userId: { type: String, default: null },
     email: { type: String, required: true },
-    status: { type: Boolean, default: false },
+    status: { type: String, default: "pending" },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 // Prevent model overwrite in development

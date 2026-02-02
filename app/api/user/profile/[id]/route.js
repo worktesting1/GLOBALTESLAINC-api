@@ -21,7 +21,7 @@ export const PUT = withAuth(async (request, { params }) => {
     if (!profileImage) {
       return NextResponse.json(
         { error: "No file uploaded" },
-        { status: 400, headers: corsHeaders(request) }
+        { status: 400, headers: corsHeaders(request) },
       );
     }
 
@@ -30,7 +30,7 @@ export const PUT = withAuth(async (request, { params }) => {
     // Use the same upload pattern as deposits
     const uploadedImage = await handleCloudinaryUpload(
       profileImage,
-      "profile-images"
+      "profile-images",
     );
 
     console.log(`✅ Successfully uploaded: ${uploadedImage.url}`);
@@ -40,13 +40,13 @@ export const PUT = withAuth(async (request, { params }) => {
       {
         $set: { profileImage: uploadedImage },
       },
-      { new: true }
+      { new: true },
     );
 
     if (!updatedUser) {
       return NextResponse.json(
         { error: "User not found" },
-        { status: 404, headers: corsHeaders(request) }
+        { status: 404, headers: corsHeaders(request) },
       );
     }
 
@@ -61,13 +61,13 @@ export const PUT = withAuth(async (request, { params }) => {
           profileImage: updatedUser.profileImage,
         },
       },
-      { status: 200, headers: corsHeaders(request) }
+      { status: 200, headers: corsHeaders(request) },
     );
   } catch (error) {
     console.error("❌ Update profile image error:", error);
     return NextResponse.json(
       { error: "Failed to update profile image", details: error.message },
-      { status: 500, headers: corsHeaders(request) }
+      { status: 500, headers: corsHeaders(request) },
     );
   }
 });
@@ -83,7 +83,7 @@ async function handleCloudinaryUpload(file, folder) {
 
     // Convert to base64 for Cloudinary
     const base64String = `data:${file.type};base64,${buffer.toString(
-      "base64"
+      "base64",
     )}`;
 
     // Use the named export directly
