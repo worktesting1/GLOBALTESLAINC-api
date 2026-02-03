@@ -140,9 +140,9 @@ async function handleUpdateKyc(req, headers, id, body) {
     // Send KYC status update email if status changed
     if (body.status !== undefined && updatedKyc.userId) {
       try {
-        if (body.status === true) {
+        if (body.status === "approved") {
           await sendKYCApprovedEmail(updatedKyc);
-        } else if (body.status === false) {
+        } else if (body.status === "rejected") {
           await sendKYCRejectedEmail(updatedKyc, body.rejectionReason);
         }
       } catch (emailError) {
