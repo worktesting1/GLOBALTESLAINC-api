@@ -90,14 +90,17 @@ async function handleRegister(body, headers) {
     });
     await newWallet.save();
 
-    // Send emails (fire and forget)
-    sendWelcomeEmail(savedUser, body.email);
-    sendAdminNotification(body.email);
+    // Wait for emails to send before responding
+    await Promise.all([
+      sendWelcomeEmail(savedUser, body.email),
+      sendAdminNotification(body.email),
+    ]);
 
     return NextResponse.json(
       { message: "Success", savedUser: savedUser },
       { status: 201, headers },
     );
+
   } catch (error) {
     console.error("Registration error:", error);
     return NextResponse.json(
